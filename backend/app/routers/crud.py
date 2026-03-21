@@ -1,0 +1,170 @@
+from typing import Any
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.db import get_db
+from app import models, schemas
+
+
+def build_crud_router(
+    *,
+    model: Any,
+    create_schema: type[BaseModel],
+    update_schema: type[BaseModel],
+    out_schema: type[BaseModel],
+    path: str,
+    tag: str,
+):
+    router = APIRouter(prefix=path, tags=[tag])
+
+    @router.post("", response_model=out_schema, status_code=status.HTTP_201_CREATED, name=f"create_{tag}")
+    def create_item(payload: dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+        data = create_schema.model_validate(payload).model_dump()
+        obj = model(**data)
+        db.add(obj)
+        db.commit()
+        db.refresh(obj)
+        return obj
+
+    @router.get("", response_model=list[out_schema], name=f"list_{tag}")
+    def list_items(
+        skip: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=200),
+        db: Session = Depends(get_db),
+    ):
+        return db.query(model).offset(skip).limit(limit).all()
+
+    @router.get("/{item_id}", response_model=out_schema, name=f"get_{tag}")
+    def get_item(item_id: int, db: Session = Depends(get_db)):
+        obj = db.query(model).filter(model.id == item_id).first()
+        if not obj:
+            raise HTTPException(status_code=404, detail=f"{tag} not found")
+        return obj
+
+    @router.put("/{item_id}", response_model=out_schema, name=f"update_{tag}")
+    def update_item(item_id: int, payload: dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+        obj = db.query(model).filter(model.id == item_id).first()
+        if not obj:
+            raise HTTPException(status_code=404, detail=f"{tag} not found")
+
+        update_data = update_schema.model_validate(payload).model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(obj, field, value)
+
+        db.commit()
+        db.refresh(obj)
+        return obj
+
+    @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT, name=f"delete_{tag}")
+    def delete_item(item_id: int, db: Session = Depends(get_db)):
+        obj = db.query(model).filter(model.id == item_id).first()
+        if not obj:
+            raise HTTPException(status_code=404, detail=f"{tag} not found")
+
+        db.delete(obj)
+        db.commit()
+        return None
+
+    return router
+
+
+filiere_router = build_crud_router(
+    model=models.Filiere,
+    create_schema=schemas.FiliereCreate,
+    update_schema=schemas.FiliereUpdate,
+    out_schema=schemas.FiliereOut,
+    path="/filieres",
+    tag="filieres",
+)
+
+domain_router = build_crud_router(
+    model=models.Domain,
+    create_schema=schemas.DomainCreate,
+    update_schema=schemas.DomainUpdate,
+    out_schema=schemas.DomainOut,
+    path="/domains",
+    tag="domains",
+)
+
+professor_router = build_crud_router(
+    model=models.Professor,
+    create_schema=schemas.ProfessorCreate,
+    update_schema=schemas.ProfessorUpdate,
+    out_schema=schemas.ProfessorOut,
+    path="/professors",
+    tag="professors",
+)
+
+student_router = build_crud_router(
+    model=models.Student,
+    create_schema=schemas.StudentCreate,
+    update_schema=schemas.StudentUpdate,
+    out_schema=schemas.StudentOut,
+    path="/students",
+    tag="students",
+)
+
+session_router = build_crud_router(
+    model=models.Session,
+    create_schema=schemas.SessionCreate,
+    update_schema=schemas.SessionUpdate,
+    out_schema=schemas.SessionOut,
+    path="/sessions",
+    tag="sessions",
+)
+
+project_router = build_crud_router(
+    model=models.Project,
+    create_schema=schemas.ProjectCreate,
+    update_schema=schemas.ProjectUpdate,
+    out_schema=schemas.ProjectOut,
+    path="/projects",
+    tag="projects",
+)
+
+slot_router = build_crud_router(
+    model=models.Slot,
+    create_schema=schemas.SlotCreate,
+    update_schema=schemas.SlotUpdate,
+    out_schema=schemas.SlotOut,
+    path="/slots",
+    tag="slots",
+)
+
+unavailability_router = build_crud_router(
+    model=models.Unavailability,
+    create_schema=schemas.UnavailabilityCreate,
+    update_schema=schemas.UnavailabilityUpdate,
+    out_schema=schemas.UnavailabilityOut,
+    path="/unavailabilities",
+    tag="unavailabilities",
+)
+
+conflict_router = build_crud_router(
+    model=models.Conflict,
+    create_schema=schemas.ConflictCreate,
+    update_schema=schemas.ConflictUpdate,
+    out_schema=schemas.ConflictOut,
+    path="/conflicts",
+    tag="conflicts",
+)
+
+assignment_router = build_crud_router(
+    model=models.Assignment,
+    create_schema=schemas.AssignmentCreate,
+    update_schema=schemas.AssignmentUpdate,
+    out_schema=schemas.AssignmentOut,
+    path="/assignments",
+    tag="assignments",
+)
+
+constraint_rule_router = build_crud_router(
+    model=models.ConstraintRule,
+    create_schema=schemas.ConstraintRuleCreate,
+    update_schema=schemas.ConstraintRuleUpdate,
+    out_schema=schemas.ConstraintRuleOut,
+    path="/constraint-rules",
+    tag="constraint_rules",
+)
