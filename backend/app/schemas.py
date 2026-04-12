@@ -235,3 +235,19 @@ class ConstraintRuleUpdate(BaseModel):
 
 class ConstraintRuleOut(ConstraintRuleBase, ORMBase):
     id: int
+
+
+class StudentImportIssue(BaseModel):
+    row_number: int
+    email: str | None = None
+    reason: str
+
+
+class StudentImportReport(BaseModel):
+    file_name: str
+    dry_run: bool
+    total_rows: int
+    inserted_count: int
+    skipped_duplicates: int
+    invalid_rows: int
+    issues: list[StudentImportIssue]

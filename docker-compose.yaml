@@ -68,11 +68,11 @@ services:
     ports:
       - "8010:8010"
 
-  streamlit-ui:
+  frontend:
     build:
       context: .
-      dockerfile: ./streamlit-ui/Dockerfile
-    container_name: juriq-streamlit-ui
+      dockerfile: ./frontend/Dockerfile
+    container_name: juriq-frontend
     restart: unless-stopped
     environment:
       ORCHESTRATOR_URL: http://orchestrator-service:8011

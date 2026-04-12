@@ -358,7 +358,7 @@ def health_tab(orchestrator_url: str, translator_url: str, solver_url: str, time
 st.set_page_config(page_title="Juriq Test Console", page_icon="J", layout="wide")
 init_state()
 
-st.title("Juriq Streamlit Test Console")
+st.title("Juriq Frontend Test Console")
 st.caption("Manual test frontend for orchestrator, translator, and solver services")
 
 with st.expander("Connection Settings", expanded=False):
