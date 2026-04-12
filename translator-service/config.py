@@ -12,8 +12,8 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/juriq"
 
-    llm_provider: Literal["gemini", "groq", "local"] = "local"
-    llm_model: str = "gemini-2.0-flash"
+    llm_provider: Literal["gemini", "groq", "local"] = "groq"
+    llm_model: str = "llama-3.3-70b-versatile"
     llm_timeout_seconds: int = 30
     llm_max_retries: int = 2
 

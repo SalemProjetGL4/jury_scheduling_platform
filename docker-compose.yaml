@@ -24,12 +24,10 @@ services:
     environment:
       TRANSLATOR_SERVICE_URL: http://translator-service:8012
       SOLVER_SERVICE_URL: http://solver-service:8010
-      LLM_PROVIDER: ${LLM_PROVIDER:-local}
-      LLM_MODEL: ${LLM_MODEL:-llama3.1}
+      LLM_PROVIDER: ${LLM_PROVIDER:-groq}
+      LLM_MODEL: ${LLM_MODEL:-llama-3.3-70b-versatile}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
       LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
       LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
       LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-local}
     ports:
@@ -49,12 +47,10 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      LLM_PROVIDER: ${LLM_PROVIDER:-local}
-      LLM_MODEL: ${LLM_MODEL:-llama3.1}
+      LLM_PROVIDER: ${LLM_PROVIDER:-groq}
+      LLM_MODEL: ${LLM_MODEL:-llama-3.3-70b-versatile}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
       LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
       LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
       LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-local}
     ports:
@@ -71,6 +67,27 @@ services:
     restart: unless-stopped
     ports:
       - "8010:8010"
+
+  streamlit-ui:
+    build:
+      context: .
+      dockerfile: ./streamlit-ui/Dockerfile
+    container_name: juriq-streamlit-ui
+    restart: unless-stopped
+    environment:
+      ORCHESTRATOR_URL: http://orchestrator-service:8011
+      TRANSLATOR_URL: http://translator-service:8012
+      SOLVER_URL: http://solver-service:8010
+      HTTP_TIMEOUT_SECONDS: ${HTTP_TIMEOUT_SECONDS:-30}
+    ports:
+      - "8501:8501"
+    depends_on:
+      orchestrator-service:
+        condition: service_started
+      translator-service:
+        condition: service_started
+      solver-service:
+        condition: service_started
 
   postgres:
     image: postgres:15-alpine
