@@ -1,0 +1,27 @@
+from pathlib import Path
+from typing import Literal
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+ENV_PATH = Path(__file__).resolve().parent / ".env"
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=ENV_PATH, env_file_encoding="utf-8", extra="ignore")
+
+    translator_service_url: str = "http://localhost:8012"
+    solver_service_url: str = "http://localhost:8010"
+
+    llm_provider: Literal["gemini", "groq", "local"] = "local"
+    llm_model: str = "gemini-2.0-flash"
+    llm_timeout_seconds: int = 30
+    llm_max_retries: int = 2
+
+    gemini_api_key: str | None = None
+    groq_api_key: str | None = None
+    local_llm_base_url: str = "http://localhost:11434/v1"
+    local_llm_api_key: str = "local"
+
+
+settings = Settings()
