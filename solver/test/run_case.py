@@ -10,7 +10,7 @@ from typing import Any
 def _load_solve() -> Any:
     """Load solve() whether script is run as module or direct file."""
     if __package__ in (None, ""):
-        repo_root = Path(__file__).resolve().parent.parent
+        repo_root = Path(__file__).resolve().parent.parent.parent
         if str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
 
@@ -20,13 +20,19 @@ def _load_solve() -> Any:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    default_input = Path(__file__).resolve().with_name("input_case.json")
     parser = argparse.ArgumentParser(
         description="Run the jury solver on a JSON input file and print result JSON."
     )
     parser.add_argument(
         "input_file",
+        nargs="?",
         type=Path,
-        help="Path to a JSON file containing the solver payload.",
+        default=default_input,
+        help=(
+            "Path to a JSON file containing the solver payload "
+            f"(default: {default_input})."
+        ),
     )
     parser.add_argument(
         "--show-input",
