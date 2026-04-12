@@ -1,0 +1,24 @@
+Return this JSON object exactly:
+
+{
+  "recognized_constraints": [
+    {
+      "name": "constraint_name",
+      "source": "llm"
+    }
+  ],
+  "unrecognized_constraints": [
+    {
+      "raw_text": "original sentence",
+      "inferred_type": "soft",
+      "reason_unrecognized": "why it cannot be mapped"
+    }
+  ],
+  "weight_overrides": {
+    "workload": 10,
+    "expertise": 5,
+    "clustering": 3,
+    "overload": 20,
+    "custom": 1
+  }
+}
