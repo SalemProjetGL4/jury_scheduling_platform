@@ -13,6 +13,65 @@ services:
       postgres:
         condition: service_healthy
 
+  orchestrator-service:
+    build:
+      context: .
+      dockerfile: ./orchestrator-service/Dockerfile
+    container_name: juriq-orchestrator-service
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      TRANSLATOR_SERVICE_URL: http://translator-service:8012
+      SOLVER_SERVICE_URL: http://solver-service:8010
+      LLM_PROVIDER: ${LLM_PROVIDER:-local}
+      LLM_MODEL: ${LLM_MODEL:-llama3.1}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-local}
+    ports:
+      - "8011:8011"
+    depends_on:
+      translator-service:
+        condition: service_started
+      solver-service:
+        condition: service_started
+
+  translator-service:
+    build:
+      context: .
+      dockerfile: ./translator-service/Dockerfile
+    container_name: juriq-translator-service
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-local}
+      LLM_MODEL: ${LLM_MODEL:-llama3.1}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-local}
+    ports:
+      - "8012:8012"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  solver-service:
+    build:
+      context: .
+      dockerfile: ./solver-service/Dockerfile
+    container_name: juriq-solver-service
+    restart: unless-stopped
+    ports:
+      - "8010:8010"
+
   postgres:
     image: postgres:15-alpine
     container_name: juriq-db
