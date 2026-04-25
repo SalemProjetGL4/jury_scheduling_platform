@@ -2,12 +2,27 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import uuid
 from typing import Any
 
 import requests
 import streamlit as st
+
+try:
+    import docker
+    from docker.errors import DockerException, NotFound
+except Exception:  # pragma: no cover - optional dependency fallback
+    docker = None
+    DockerException = Exception
+    NotFound = Exception
+
+
+_SERVICE_CONTAINERS = {
+    "translator": "juriq-translator-service",
+    "solver": "juriq-solver-service",
+}
 
 
 def api_call(method: str, url: str, timeout: int, payload: dict[str, Any] | None = None) -> tuple[bool, Any]:
@@ -39,9 +54,164 @@ def render_health_card(name: str, base_url: str, timeout: int) -> None:
 
 def init_state() -> None:
     st.session_state.setdefault("last_request_id", "")
-    st.session_state.setdefault("last_status", {})
-    st.session_state.setdefault("last_result", {})
     st.session_state.setdefault("last_translator_payload", {})
+    st.session_state.setdefault("last_translator_response", {})
+    st.session_state.setdefault("last_solver_input", {})
+    st.session_state.setdefault("last_solver_response", {})
+    st.session_state.setdefault("service_log_cache", {})
+
+
+def _safe_service_name(container_name: str) -> str:
+    return container_name.replace("juriq-", "").replace("-service", "").strip()
+
+
+def _detect_log_level(message: str) -> str:
+    lowered = message.lower()
+    if "error" in lowered or "traceback" in lowered or "exception" in lowered:
+        return "ERROR"
+    if "warning" in lowered or "warn" in lowered:
+        return "WARNING"
+    if "debug" in lowered:
+        return "DEBUG"
+    return "INFO"
+
+
+def _humanize_message(message: str) -> str:
+    replacements = {
+        "TRANSLATION REQUEST START": "Translation request started",
+        "LLM SYSTEM PROMPT START": "LLM prompt starts",
+        "LLM SYSTEM PROMPT END": "LLM prompt ends",
+        "LLM USER MESSAGE START": "LLM user message starts",
+        "LLM USER MESSAGE END": "LLM user message ends",
+        "LLM RAW OUTPUT START": "LLM output starts",
+        "LLM RAW OUTPUT END": "LLM output ends",
+        "LLM PARSED JSON START": "Parsed LLM JSON starts",
+        "LLM PARSED JSON END": "Parsed LLM JSON ends",
+        "DB SNAPSHOT STATS START": "Database snapshot stats starts",
+        "DB SNAPSHOT STATS END": "Database snapshot stats ends",
+        "SOLVER INPUT START": "Solver full input starts",
+        "SOLVER INPUT END": "Solver full input ends",
+    }
+    for key, replacement in replacements.items():
+        if key in message:
+            return replacement
+    return message
+
+
+def _parse_logs(raw_text: str, container_name: str) -> list[dict[str, str]]:
+    timestamp_pattern = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2}T[^\s]+)\s+(?P<msg>.*)$")
+    parsed: list[dict[str, str]] = []
+
+    for line in raw_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        matched = timestamp_pattern.match(stripped)
+        if matched:
+            timestamp = matched.group("ts")
+            message = matched.group("msg").strip()
+        else:
+            timestamp = "-"
+            message = stripped
+
+        parsed.append(
+            {
+                "time": timestamp,
+                "service": _safe_service_name(container_name),
+                "level": _detect_log_level(message),
+                "message": _humanize_message(message),
+            }
+        )
+
+    return parsed
+
+
+def _load_container_logs(container_name: str) -> tuple[bool, dict[str, Any]]:
+    if docker is None:
+        return False, {"error": "Python Docker SDK is not available in the frontend container."}
+
+    try:
+        client = docker.from_env()
+        container = client.containers.get(container_name)
+        raw = container.logs(stdout=True, stderr=True, timestamps=True).decode("utf-8", errors="replace")
+        entries = _parse_logs(raw, container_name)
+        return True, {
+            "container": container_name,
+            "entries": entries,
+            "raw": raw,
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    except NotFound:
+        return False, {"error": f"Container {container_name} was not found. Ensure docker compose is running."}
+    except DockerException as exc:
+        return False, {
+            "error": (
+                "Could not access Docker from frontend. "
+                "Mount /var/run/docker.sock into the frontend service. "
+                f"Details: {exc}"
+            )
+        }
+
+
+def render_service_logs_tab(label: str, container_name: str) -> None:
+    st.markdown(f"### {label} Logs")
+    st.caption("Readable service logs with severity, timestamps, and quick highlights")
+
+    cache = st.session_state["service_log_cache"]
+    refresh_key = f"refresh_{container_name}"
+    should_refresh = st.button("Refresh Logs", key=refresh_key, use_container_width=True)
+
+    if should_refresh or container_name not in cache:
+        ok, data = _load_container_logs(container_name)
+        cache[container_name] = {"ok": ok, "data": data}
+
+    snapshot = cache.get(container_name, {})
+    if not snapshot:
+        st.info("No logs loaded yet")
+        return
+
+    if not snapshot.get("ok"):
+        st.error(snapshot.get("data", {}).get("error", "Failed to load logs"))
+        return
+
+    data = snapshot["data"]
+    entries = data.get("entries", [])
+    st.caption(f"Last updated: {data.get('updated_at', '-')}")
+
+    error_count = sum(1 for item in entries if item.get("level") == "ERROR")
+    warning_count = sum(1 for item in entries if item.get("level") == "WARNING")
+    info_count = sum(1 for item in entries if item.get("level") == "INFO")
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Total Lines", len(entries))
+    with c2:
+        st.metric("Errors", error_count)
+    with c3:
+        st.metric("Warnings", warning_count)
+    with c4:
+        st.metric("Info", info_count)
+
+    if not entries:
+        st.info("No log lines returned for this service")
+        return
+
+    highlights = [
+        item
+        for item in entries
+        if item.get("level") in {"ERROR", "WARNING"} or "LLM" in str(item.get("message", ""))
+    ]
+
+    if highlights:
+        st.markdown("#### Highlights")
+        st.dataframe(highlights[:50], use_container_width=True, hide_index=True)
+
+    st.markdown("#### Full Log View")
+    st.dataframe(entries, use_container_width=True, hide_index=True)
+
+    with st.expander("Raw log text"):
+        st.text(data.get("raw", ""))
 
 
 def _format_roles(roles: dict[str, Any]) -> str:
@@ -145,131 +315,89 @@ def render_result_summary(result_data: dict[str, Any]) -> None:
         st.dataframe(unrecognized, use_container_width=True)
 
 
-def workflow_tab(orchestrator_url: str, timeout: int) -> None:
-    st.markdown("### Workflow Test")
-    st.caption("1) Submit a prompt  2) Track until done  3) Read state and result below")
+def overview_tab(translator_url: str, solver_url: str, timeout: int) -> None:
+    st.markdown("### Overview")
+    st.caption("Direct pipeline: Translator reads DB + prompt, then Solver receives formatted JSON")
     prompt = st.text_area(
         "Prompt",
         value="Create a jury schedule for all current projects and prefer morning sessions when possible.",
         height=120,
     )
     user_id = st.text_input("User ID", value="demo-user")
+    request_id = st.text_input("Request ID", value=st.session_state.get("last_request_id") or str(uuid.uuid4())[:8])
 
-    submit_col, clear_col = st.columns([1, 1])
+    submit_col, clear_col = st.columns([2, 1])
     with submit_col:
-        if st.button("Submit Workflow", type="primary", use_container_width=True):
-            payload = {"prompt": prompt, "user_id": user_id or None}
-            ok, data = api_call("POST", f"{orchestrator_url.rstrip('/')}/workflows/schedule", timeout, payload)
+        if st.button("Run Translator -> Solver", type="primary", use_container_width=True):
+            st.session_state["last_request_id"] = request_id
+            translator_req = {"request_id": request_id, "prompt": prompt, "user_id": user_id or None}
+
+            ok, data = api_call("POST", f"{translator_url.rstrip('/')}/translate", timeout, translator_req)
             if ok:
-                st.session_state["last_request_id"] = data.get("request_id", "")
-                st.session_state["last_status"] = {}
-                st.session_state["last_result"] = {}
-                st.success("Workflow submitted")
-                st.caption(f"Request ID: {st.session_state['last_request_id']}")
+                st.session_state["last_translator_response"] = data
+                translator_payload = data.get("translator_payload") if isinstance(data, dict) else None
+                if not isinstance(translator_payload, dict):
+                    st.error("Translator did not return a valid translator_payload")
+                    return
+
+                st.session_state["last_translator_payload"] = translator_payload
+                st.session_state["last_solver_input"] = translator_payload
+
+                st.success("Translator finished, now calling solver")
+                solver_ok, solver_data = api_call(
+                    "POST",
+                    f"{solver_url.rstrip('/')}/solve",
+                    timeout,
+                    translator_payload,
+                )
+                if solver_ok:
+                    st.session_state["last_solver_response"] = solver_data
+                    st.success("Solver finished")
+                else:
+                    st.error("Solver call failed")
+                    st.session_state["last_solver_response"] = {}
+                    st.json(solver_data)
             else:
-                st.error("Submission failed")
+                st.error("Translation failed")
                 st.json(data)
 
     with clear_col:
         if st.button("Clear Stored Result", use_container_width=True):
-            st.session_state["last_status"] = {}
-            st.session_state["last_result"] = {}
+            st.session_state["last_translator_response"] = {}
+            st.session_state["last_translator_payload"] = {}
+            st.session_state["last_solver_input"] = {}
+            st.session_state["last_solver_response"] = {}
             st.session_state["last_request_id"] = ""
 
-    request_id = st.text_input("Request ID", value=st.session_state.get("last_request_id", ""))
-    st.session_state["last_request_id"] = request_id
+    last_request_id = st.session_state.get("last_request_id", "")
+    if last_request_id:
+        st.markdown(f"**Current Request ID:** {last_request_id}")
+    else:
+        st.info("No direct run submitted yet")
 
-    status_col, track_col, result_col = st.columns([1, 1, 1])
-    with status_col:
-        if st.button("Refresh Status", use_container_width=True) and request_id:
-            ok, data = api_call(
-                "GET",
-                f"{orchestrator_url.rstrip('/')}/workflows/{request_id}/status",
-                timeout,
-            )
-            if ok:
-                st.session_state["last_status"] = data
-            else:
-                st.error("Status fetch failed")
-                st.json(data)
+    translator_response = st.session_state.get("last_translator_response") or {}
+    solver_input = st.session_state.get("last_solver_input") or {}
+    solver_response = st.session_state.get("last_solver_response") or {}
 
-    progress_placeholder = st.empty()
+    if translator_response:
+        recognized = translator_response.get("recognized_constraints", [])
+        unrecognized = translator_response.get("unrecognized_constraints", [])
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric("Recognized Constraints", len(recognized))
+        with c2:
+            st.metric("Unrecognized Constraints", len(unrecognized))
 
-    with track_col:
-        if st.button("Track Until Done", use_container_width=True):
-            if not request_id:
-                st.error("Enter a request ID first")
-            else:
-                max_polls = 60
-                poll_interval_s = 1.0
-                finished = False
-                with st.spinner("Tracking request..."):
-                    for poll_idx in range(1, max_polls + 1):
-                        ok, data = api_call(
-                            "GET",
-                            f"{orchestrator_url.rstrip('/')}/workflows/{request_id}/status",
-                            timeout,
-                        )
-                        if not ok:
-                            progress_placeholder.error("Failed to fetch status during tracking")
-                            st.json(data)
-                            break
+        st.markdown("#### Translator Response")
+        st.json(translator_response)
 
-                        st.session_state["last_status"] = data
-                        current_node = data.get("current_node") or "idle"
-                        final_status = data.get("final_status", "running")
-                        progress_placeholder.info(
-                            f"Polling {poll_idx}/{max_polls} - current node: {current_node} - state: {final_status}"
-                        )
+    if solver_input:
+        st.markdown("#### Solver Input (From Translator)")
+        st.json(solver_input)
 
-                        if final_status != "running":
-                            finished = True
-                            break
-
-                        time.sleep(poll_interval_s)
-
-                if finished:
-                    ok, data = api_call(
-                        "GET",
-                        f"{orchestrator_url.rstrip('/')}/workflows/{request_id}/result",
-                        timeout,
-                    )
-                    if ok:
-                        st.session_state["last_result"] = data
-                        translator_payload = data.get("translator_payload")
-                        if isinstance(translator_payload, dict):
-                            st.session_state["last_translator_payload"] = translator_payload
-                        progress_placeholder.success("Request finished and result loaded")
-                    else:
-                        progress_placeholder.warning("Request finished, but loading final result failed")
-                        st.json(data)
-                else:
-                    progress_placeholder.warning("Tracking stopped before completion. Click Track Until Done again.")
-
-    with result_col:
-        if st.button("Load Result", use_container_width=True) and request_id:
-            ok, data = api_call(
-                "GET",
-                f"{orchestrator_url.rstrip('/')}/workflows/{request_id}/result",
-                timeout,
-            )
-            if ok:
-                st.session_state["last_result"] = data
-                translator_payload = data.get("translator_payload")
-                if isinstance(translator_payload, dict):
-                    st.session_state["last_translator_payload"] = translator_payload
-            else:
-                st.error("Result fetch failed")
-                st.json(data)
-
-    if st.session_state["last_status"]:
-        st.markdown("#### Request State")
-        status_data = st.session_state["last_status"]
-        render_status_summary(status_data)
-
-    if st.session_state["last_result"]:
-        st.markdown("#### Request Result")
-        render_result_summary(st.session_state["last_result"])
+    if solver_response:
+        st.markdown("#### Solver Result")
+        st.json(solver_response)
 
 
 def translator_tab(translator_url: str, timeout: int) -> None:
@@ -344,14 +472,12 @@ def solver_tab(solver_url: str, timeout: int) -> None:
             st.json(data)
 
 
-def health_tab(orchestrator_url: str, translator_url: str, solver_url: str, timeout: int) -> None:
+def health_tab(translator_url: str, solver_url: str, timeout: int) -> None:
     st.markdown("### Service Health")
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     with c1:
-        render_health_card("Orchestrator", orchestrator_url, timeout)
-    with c2:
         render_health_card("Translator", translator_url, timeout)
-    with c3:
+    with c2:
         render_health_card("Solver", solver_url, timeout)
 
 
@@ -359,13 +485,9 @@ st.set_page_config(page_title="Juriq Test Console", page_icon="J", layout="wide"
 init_state()
 
 st.title("Juriq Frontend Test Console")
-st.caption("Manual test frontend for orchestrator, translator, and solver services")
+st.caption("Direct translator-to-solver console with readable service logs")
 
 with st.expander("Connection Settings", expanded=False):
-    orchestrator_url = st.text_input(
-        "Orchestrator URL",
-        value=os.getenv("ORCHESTRATOR_URL", "http://localhost:8011"),
-    )
     translator_url = st.text_input(
         "Translator URL",
         value=os.getenv("TRANSLATOR_URL", "http://localhost:8012"),
@@ -382,12 +504,12 @@ with st.expander("Connection Settings", expanded=False):
         step=1,
     )
 
-tabs = st.tabs(["Workflow", "Translator", "Solver", "Health"])
+tabs = st.tabs(["Overview", "Translator Logs", "Solver Logs", "Health"])
 with tabs[0]:
-    workflow_tab(orchestrator_url, timeout)
+    overview_tab(translator_url, solver_url, timeout)
 with tabs[1]:
-    translator_tab(translator_url, timeout)
+    render_service_logs_tab("Translator", _SERVICE_CONTAINERS["translator"])
 with tabs[2]:
-    solver_tab(solver_url, timeout)
+    render_service_logs_tab("Solver", _SERVICE_CONTAINERS["solver"])
 with tabs[3]:
-    health_tab(orchestrator_url, translator_url, solver_url, timeout)
+    health_tab(translator_url, solver_url, timeout)

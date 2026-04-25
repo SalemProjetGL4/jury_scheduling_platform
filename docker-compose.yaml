@@ -75,15 +75,14 @@ services:
     container_name: juriq-frontend
     restart: unless-stopped
     environment:
-      ORCHESTRATOR_URL: http://orchestrator-service:8011
       TRANSLATOR_URL: http://translator-service:8012
       SOLVER_URL: http://solver-service:8010
       HTTP_TIMEOUT_SECONDS: ${HTTP_TIMEOUT_SECONDS:-30}
     ports:
       - "8501:8501"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
-      orchestrator-service:
-        condition: service_started
       translator-service:
         condition: service_started
       solver-service:

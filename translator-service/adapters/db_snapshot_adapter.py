@@ -29,9 +29,21 @@ def build_db_snapshot() -> dict[str, Any]:
         professor_rows = conn.execute(
             text(
                 """
-                SELECT p.id, p.name, p.email, p.specialities, p.max_juries, p.domain AS domain_id, d.name AS domain_name
+                SELECT
+                    p.id,
+                    p.name,
+                    p.email,
+                    p.preferences,
+                    p.max_juries,
+                    MIN(pd.domain_id) AS domain_id,
+                    COALESCE(
+                        ARRAY_AGG(DISTINCT d.name) FILTER (WHERE d.name IS NOT NULL),
+                        ARRAY[]::text[]
+                    ) AS domain_names
                 FROM professor p
-                LEFT JOIN domain d ON d.id = p.domain
+                LEFT JOIN professor_domain pd ON pd.professor_id = p.id
+                LEFT JOIN domain d ON d.id = pd.domain_id
+                GROUP BY p.id, p.name, p.email, p.preferences, p.max_juries
                 ORDER BY p.id
                 """
             )
@@ -40,10 +52,10 @@ def build_db_snapshot() -> dict[str, Any]:
         project_rows = conn.execute(
             text(
                 """
-                SELECT pr.id, pr.title, pr.domain AS domain_id, d.name AS domain_name,
+                  SELECT pr.id, pr.title, pr.domain_id AS domain_id, d.name AS domain_name,
                        pr.supervisor_id, pr.student_id, st.name AS student_name
                 FROM project pr
-                LEFT JOIN domain d ON d.id = pr.domain
+                  LEFT JOIN domain d ON d.id = pr.domain_id
                 LEFT JOIN student st ON st.id = pr.student_id
                 ORDER BY pr.id
                 """
@@ -144,10 +156,10 @@ def build_db_snapshot() -> dict[str, Any]:
                 "id": int(row["id"]),
                 "name": str(row["name"]),
                 "email": str(row["email"]),
-                "specialities": list(row["specialities"] or []),
+                "specialities": list(row["preferences"] or []),
                 "max_juries": int(row["max_juries"]),
-                "domain_id": int(row["domain_id"]),
-                "domain_name": str(row["domain_name"] or ""),
+                "domain_id": int(row["domain_id"] or 0),
+                "domain_name": (list(row["domain_names"] or [""])[0] if list(row["domain_names"] or []) else ""),
             }
             for row in professor_rows
         ],

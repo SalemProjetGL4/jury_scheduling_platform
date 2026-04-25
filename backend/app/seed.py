@@ -10,9 +10,12 @@ from app.models import (
     Assignment,
     Conflict,
     ConstraintRule,
+    Department,
+    DepartmentDomain,
     Domain,
     Filiere,
     Professor,
+    ProfessorDomain,
     Project,
     Session as JurySession,
     Slot,
@@ -26,6 +29,8 @@ def clear_all(db: Session) -> None:
     db.execute(delete(Assignment))
     db.execute(delete(Conflict))
     db.execute(delete(Unavailability))
+    db.execute(delete(ProfessorDomain))
+    db.execute(delete(DepartmentDomain))
     db.execute(delete(Slot))
     db.execute(delete(Project))
     db.execute(delete(ConstraintRule))
@@ -34,6 +39,7 @@ def clear_all(db: Session) -> None:
     db.execute(delete(Professor))
     db.execute(delete(Domain))
     db.execute(delete(Filiere))
+    db.execute(delete(Department))
 
 
 def already_seeded(db: Session) -> bool:
@@ -42,58 +48,79 @@ def already_seeded(db: Session) -> bool:
 
 
 def seed(db: Session) -> None:
-    filiere_cs = Filiere(name="Computer Science")
-    filiere_ds = Filiere(name="Data Science")
+    dep_cs = Department(name="Computer Science Department")
+    dep_ds = Department(name="Data Science Department")
+    db.add_all([dep_cs, dep_ds])
+    db.flush()
+
+    filiere_cs = Filiere(name="Computer Science", department_id=dep_cs.id)
+    filiere_ds = Filiere(name="Data Science", department_id=dep_ds.id)
     db.add_all([filiere_cs, filiere_ds])
     db.flush()
 
-    domain_ai = Domain(name="Artificial Intelligence", filiere_id=filiere_cs.id)
-    domain_se = Domain(name="Software Engineering", filiere_id=filiere_cs.id)
-    domain_da = Domain(name="Data Analytics", filiere_id=filiere_ds.id)
+    domain_ai = Domain(name="Artificial Intelligence")
+    domain_se = Domain(name="Software Engineering")
+    domain_da = Domain(name="Data Analytics")
     db.add_all([domain_ai, domain_se, domain_da])
     db.flush()
+
+    db.add_all(
+        [
+            DepartmentDomain(department_id=dep_cs.id, domain_id=domain_ai.id),
+            DepartmentDomain(department_id=dep_cs.id, domain_id=domain_se.id),
+            DepartmentDomain(department_id=dep_ds.id, domain_id=domain_da.id),
+        ]
+    )
 
     prof_a = Professor(
         name="Dr. Amina Rami",
         email="amina.rami@example.com",
-        specialities=["optimization", "scheduling"],
+        department_id=dep_cs.id,
         max_juries=4,
-        domain_id=domain_ai.id,
+        preferences=["optimization", "scheduling"],
     )
     prof_b = Professor(
         name="Dr. Karim Haddad",
         email="karim.haddad@example.com",
-        specialities=["machine-learning", "data-mining"],
+        department_id=dep_ds.id,
         max_juries=3,
-        domain_id=domain_da.id,
+        preferences=["machine-learning", "data-mining"],
     )
     prof_c = Professor(
         name="Dr. Salma Idrissi",
         email="salma.idrissi@example.com",
-        specialities=["software-architecture", "testing"],
+        department_id=dep_cs.id,
         max_juries=5,
-        domain_id=domain_se.id,
+        preferences=["software-architecture", "testing"],
     )
     db.add_all([prof_a, prof_b, prof_c])
     db.flush()
 
+    db.add_all(
+        [
+            ProfessorDomain(professor_id=prof_a.id, domain_id=domain_ai.id),
+            ProfessorDomain(professor_id=prof_b.id, domain_id=domain_da.id),
+            ProfessorDomain(professor_id=prof_c.id, domain_id=domain_se.id),
+        ]
+    )
+
     student_a = Student(
         name="Youssef Benali",
         email="youssef.benali@example.com",
-        promotion_year=2026,
+        promotion=dt.date(2026, 1, 1),
         filiere_id=filiere_cs.id,
     )
     student_b = Student(
         name="Lina Amrani",
         email="lina.amrani@example.com",
-        promotion_year=2026,
+        promotion=dt.date(2026, 1, 1),
         filiere_id=filiere_ds.id,
     )
     db.add_all([student_a, student_b])
     db.flush()
 
-    session_1 = JurySession(status="planned", date=dt.date(2026, 6, 20))
-    session_2 = JurySession(status="planned", date=dt.date(2026, 6, 21))
+    session_1 = JurySession(status="planned", start_date=dt.date(2026, 6, 20), end_date=dt.date(2026, 6, 20))
+    session_2 = JurySession(status="planned", start_date=dt.date(2026, 6, 21), end_date=dt.date(2026, 6, 21))
     db.add_all([session_1, session_2])
     db.flush()
 

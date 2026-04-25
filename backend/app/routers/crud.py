@@ -1,3 +1,4 @@
+import datetime as dt
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -116,7 +117,7 @@ student_router = build_crud_router(
 )
 def import_students_endpoint(
     file: UploadFile = File(...),
-    promotion_year: int | None = Form(default=None),
+    promotion: dt.date | None = Form(default=None),
     filiere_id: int | None = Form(default=None),
     filiere_name: str | None = Form(default=None),
     dry_run: bool = Form(default=False),
@@ -127,7 +128,7 @@ def import_students_endpoint(
             db=db,
             file_name=file.filename or "students_upload",
             content=file.file.read(),
-            default_promotion_year=promotion_year,
+            default_promotion=promotion,
             default_filiere_id=filiere_id,
             default_filiere_name=filiere_name,
             dry_run=dry_run,

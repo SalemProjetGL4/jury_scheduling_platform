@@ -37,8 +37,8 @@ Backend now supports student batch import:
 - Endpoint: POST /students/import
 - Accepted formats: .csv, .xlsx
 - Required columns in file: name, email
-- Additional supported columns: promotion_year, filiere_id, filiere_name
-- Optional form defaults: promotion_year, filiere_id, filiere_name, dry_run
+- Additional supported columns: promotion, promotion_year, filiere_id, filiere_name
+- Optional form defaults: promotion, filiere_id, filiere_name, dry_run
 
 Complex sample dataset for October 2026 is available at:
 

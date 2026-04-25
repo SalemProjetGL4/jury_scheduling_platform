@@ -1,24 +1,22 @@
 Return this JSON object exactly:
 
 {
-  "recognized_constraints": [
-    {
-      "name": "constraint_name",
-      "source": "llm"
-    }
-  ],
-  "unrecognized_constraints": [
-    {
-      "raw_text": "original sentence",
-      "inferred_type": "soft",
-      "reason_unrecognized": "why it cannot be mapped"
-    }
-  ],
-  "weight_overrides": {
-    "workload": 10,
-    "expertise": 5,
-    "clustering": 3,
-    "overload": 20,
-    "custom": 1
-  }
+  "professors": [{"id": 1, "domain_id": 10, "max_juries": 2}],
+  "projects": [{"id": 100, "domain_id": 10, "supervisor_id": 1}],
+  "sessions": [{"id": 3000, "date": "2026-06-20", "period": "morning"}],
+  "constraints": {
+    "hard_max_juries": 2,
+    "weights": {
+      "workload": 10,
+      "expertise": 5,
+      "clustering": 3,
+      "overload": 20,
+      "custom": 1
+    },
+    "hard": [{"rule": "require_project_session", "project_id": 100, "session_id": 3000}],
+    "soft": [{"rule": "prefer_project_session", "project_id": 100, "session_id": 3000, "weight": 1.0}]
+  },
+  "unavailabilities": [{"professor_id": 1, "date": "2026-06-22", "period": "afternoon"}],
+  "conflicts": [{"professor_a": 1, "professor_b": 2}],
+  "constraint_rules": [{"name": "example", "rule": "prefer_morning", "type": "soft", "weight": 1.0, "payload": {"rule": "prefer_morning"}, "enabled": true}]
 }

@@ -1,43 +1,69 @@
-CREATE TABLE IF NOT EXISTS filiere (
+-- =====================
+-- CORE STRUCTURE
+-- =====================
+
+CREATE TABLE IF NOT EXISTS department (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS domain (
+CREATE TABLE IF NOT EXISTS filiere (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL,
-    filiere_id BIGINT NOT NULL REFERENCES filiere(id)
+    department_id BIGINT NOT NULL REFERENCES department(id)
 );
+
+CREATE TABLE IF NOT EXISTS domain (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+-- =====================
+-- USERS
+-- =====================
 
 CREATE TABLE IF NOT EXISTS professor (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
-    specialities TEXT[] NOT NULL,
+    department_id BIGINT NOT NULL REFERENCES department(id),
     max_juries INT NOT NULL,
-    domain BIGINT NOT NULL REFERENCES domain(id)
+    preferences TEXT[]
 );
 
 CREATE TABLE IF NOT EXISTS student (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
-    promotion_year INT NOT NULL,
+    promotion DATE NOT NULL,
     filiere_id BIGINT NOT NULL REFERENCES filiere(id)
 );
 
-CREATE TABLE IF NOT EXISTS session (
-    id BIGSERIAL PRIMARY KEY,
-    status TEXT NOT NULL CHECK (status IN ('planned', 'in_progress', 'completed')),
-    date DATE NOT NULL
+-- =====================
+-- MANY-TO-MANY RELATIONS
+-- =====================
+
+CREATE TABLE IF NOT EXISTS department_domain (
+    department_id BIGINT REFERENCES department(id) ON DELETE CASCADE,
+    domain_id BIGINT REFERENCES domain(id) ON DELETE CASCADE,
+    PRIMARY KEY (department_id, domain_id)
 );
 
-CREATE TABLE IF NOT EXISTS project (
+CREATE TABLE IF NOT EXISTS professor_domain (
+    professor_id BIGINT REFERENCES professor(id) ON DELETE CASCADE,
+    domain_id BIGINT REFERENCES domain(id) ON DELETE CASCADE,
+    PRIMARY KEY (professor_id, domain_id)
+);
+
+-- =====================
+-- SESSION & SCHEDULING
+-- =====================
+
+CREATE TABLE IF NOT EXISTS session (
     id BIGSERIAL PRIMARY KEY,
-    title TEXT NOT NULL,
-    domain BIGINT NOT NULL REFERENCES domain(id),
-    supervisor_id BIGINT NOT NULL REFERENCES professor(id),
-    student_id BIGINT NOT NULL REFERENCES student(id)
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('planned', 'in_progress', 'completed'))
 );
 
 CREATE TABLE IF NOT EXISTS slot (
@@ -48,6 +74,22 @@ CREATE TABLE IF NOT EXISTS slot (
     room TEXT NOT NULL,
     session_id BIGINT NOT NULL REFERENCES session(id) ON DELETE CASCADE
 );
+
+-- =====================
+-- PROJECTS
+-- =====================
+
+CREATE TABLE IF NOT EXISTS project (
+    id BIGSERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    domain_id BIGINT NOT NULL REFERENCES domain(id),
+    supervisor_id BIGINT NOT NULL REFERENCES professor(id),
+    student_id BIGINT NOT NULL REFERENCES student(id)
+);
+
+-- =====================
+-- CONSTRAINTS / LOGIC
+-- =====================
 
 CREATE TABLE IF NOT EXISTS unavailability (
     id BIGSERIAL PRIMARY KEY,
@@ -65,10 +107,10 @@ CREATE TABLE IF NOT EXISTS conflict (
 
 CREATE TABLE IF NOT EXISTS assignment (
     id BIGSERIAL PRIMARY KEY,
-    examiner_id BIGINT NOT NULL REFERENCES professor(id),
     project_id BIGINT NOT NULL REFERENCES project(id),
+    slot_id BIGINT NOT NULL REFERENCES slot(id) ON DELETE CASCADE,
     president_id BIGINT NOT NULL REFERENCES professor(id),
-    slot_id BIGINT NOT NULL REFERENCES slot(id) ON DELETE CASCADE
+    examiner_id BIGINT NOT NULL REFERENCES professor(id)
 );
 
 CREATE TABLE IF NOT EXISTS constraint_rule (

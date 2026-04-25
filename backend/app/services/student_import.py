@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import datetime as dt
 from io import BytesIO, StringIO
 from typing import Any
 
@@ -18,8 +19,9 @@ _COLUMN_ALIASES = {
     "student_name": "name",
     "full_name": "name",
     "mail": "email",
-    "academic_year": "promotion_year",
-    "year": "promotion_year",
+    "academic_year": "promotion",
+    "year": "promotion",
+    "promotion_year": "promotion",
     "filiere": "filiere_name",
     "track": "filiere_name",
     "department": "filiere_name",
@@ -110,6 +112,30 @@ def _to_int(value: Any) -> int | None:
         return None
 
 
+def _to_date(value: Any) -> dt.date | None:
+    if value is None:
+        return None
+
+    if isinstance(value, dt.datetime):
+        return value.date()
+    if isinstance(value, dt.date):
+        return value
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    # Keep compatibility with year-only files by mapping 2026 -> 2026-01-01.
+    year_value = _to_int(text)
+    if year_value is not None and 1900 <= year_value <= 3000 and len(text) <= 4:
+        return dt.date(year_value, 1, 1)
+
+    try:
+        return dt.date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
 def _to_clean_str(value: Any) -> str | None:
     if value is None:
         return None
@@ -122,7 +148,7 @@ def import_students(
     db: Session,
     file_name: str,
     content: bytes,
-    default_promotion_year: int | None,
+    default_promotion: dt.date | None,
     default_filiere_id: int | None,
     default_filiere_name: str | None,
     dry_run: bool,
@@ -160,7 +186,7 @@ def import_students(
     for idx, row in enumerate(rows, start=2):
         name = _to_clean_str(row.get("name"))
         email_raw = _to_clean_str(row.get("email"))
-        promotion_year = _to_int(row.get("promotion_year")) or default_promotion_year
+        promotion = _to_date(row.get("promotion")) or default_promotion
 
         row_filiere_id = _to_int(row.get("filiere_id"))
         row_filiere_name = _to_clean_str(row.get("filiere_name"))
@@ -184,12 +210,12 @@ def import_students(
             issues.append({"row_number": idx, "email": email_raw, "reason": "Invalid email format"})
             continue
 
-        if promotion_year is None:
+        if promotion is None:
             issues.append(
                 {
                     "row_number": idx,
                     "email": normalized_email,
-                    "reason": "Missing promotion_year and no default provided",
+                    "reason": "Missing promotion and no default provided",
                 }
             )
             continue
@@ -223,7 +249,7 @@ def import_students(
             models.Student(
                 name=name,
                 email=normalized_email,
-                promotion_year=promotion_year,
+                promotion=promotion,
                 filiere_id=filiere_id,
             )
         )

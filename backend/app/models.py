@@ -14,9 +14,16 @@ class Professor(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     email: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-    specialities: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False)
+    department_id: Mapped[int] = mapped_column(ForeignKey("department.id"), nullable=False)
     max_juries: Mapped[int] = mapped_column(Integer, nullable=False)
-    domain_id: Mapped[int] = mapped_column("domain", ForeignKey("domain.id"), nullable=False)
+    preferences: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
+
+
+class Department(Base):
+    __tablename__ = "department"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class Filiere(Base):
@@ -24,6 +31,7 @@ class Filiere(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
+    department_id: Mapped[int] = mapped_column(ForeignKey("department.id"), nullable=False)
 
 
 class Domain(Base):
@@ -31,7 +39,20 @@ class Domain(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
-    filiere_id: Mapped[int] = mapped_column(ForeignKey("filiere.id"), nullable=False)
+
+
+class DepartmentDomain(Base):
+    __tablename__ = "department_domain"
+
+    department_id: Mapped[int] = mapped_column(ForeignKey("department.id", ondelete="CASCADE"), primary_key=True)
+    domain_id: Mapped[int] = mapped_column(ForeignKey("domain.id", ondelete="CASCADE"), primary_key=True)
+
+
+class ProfessorDomain(Base):
+    __tablename__ = "professor_domain"
+
+    professor_id: Mapped[int] = mapped_column(ForeignKey("professor.id", ondelete="CASCADE"), primary_key=True)
+    domain_id: Mapped[int] = mapped_column(ForeignKey("domain.id", ondelete="CASCADE"), primary_key=True)
 
 
 class Student(Base):
@@ -40,7 +61,7 @@ class Student(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     email: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-    promotion_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    promotion: Mapped[dt.date] = mapped_column(Date, nullable=False)
     filiere_id: Mapped[int] = mapped_column(ForeignKey("filiere.id"), nullable=False)
 
 
@@ -52,7 +73,8 @@ class Session(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
-    date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    start_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
 
 
 class Project(Base):
@@ -60,7 +82,7 @@ class Project(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
-    domain_id: Mapped[int] = mapped_column("domain", ForeignKey("domain.id"), nullable=False)
+    domain_id: Mapped[int] = mapped_column(ForeignKey("domain.id"), nullable=False)
     supervisor_id: Mapped[int] = mapped_column(ForeignKey("professor.id"), nullable=False)
     student_id: Mapped[int] = mapped_column(ForeignKey("student.id"), nullable=False)
 

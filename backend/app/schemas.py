@@ -11,6 +11,7 @@ class ORMBase(BaseModel):
 
 class FiliereBase(BaseModel):
     name: str
+    department_id: int
 
 
 class FiliereCreate(FiliereBase):
@@ -19,6 +20,7 @@ class FiliereCreate(FiliereBase):
 
 class FiliereUpdate(BaseModel):
     name: str | None = None
+    department_id: int | None = None
 
 
 class FiliereOut(FiliereBase, ORMBase):
@@ -27,7 +29,6 @@ class FiliereOut(FiliereBase, ORMBase):
 
 class DomainBase(BaseModel):
     name: str
-    filiere_id: int
 
 
 class DomainCreate(DomainBase):
@@ -36,7 +37,6 @@ class DomainCreate(DomainBase):
 
 class DomainUpdate(BaseModel):
     name: str | None = None
-    filiere_id: int | None = None
 
 
 class DomainOut(DomainBase, ORMBase):
@@ -46,9 +46,9 @@ class DomainOut(DomainBase, ORMBase):
 class ProfessorBase(BaseModel):
     name: str
     email: EmailStr
-    specialities: list[str]
+    department_id: int
     max_juries: int
-    domain_id: int
+    preferences: list[str] | None = None
 
 
 class ProfessorCreate(ProfessorBase):
@@ -58,9 +58,9 @@ class ProfessorCreate(ProfessorBase):
 class ProfessorUpdate(BaseModel):
     name: str | None = None
     email: EmailStr | None = None
-    specialities: list[str] | None = None
+    department_id: int | None = None
     max_juries: int | None = None
-    domain_id: int | None = None
+    preferences: list[str] | None = None
 
 
 class ProfessorOut(ProfessorBase, ORMBase):
@@ -70,7 +70,7 @@ class ProfessorOut(ProfessorBase, ORMBase):
 class StudentBase(BaseModel):
     name: str
     email: EmailStr
-    promotion_year: int
+    promotion: dt.date
     filiere_id: int
 
 
@@ -81,7 +81,7 @@ class StudentCreate(StudentBase):
 class StudentUpdate(BaseModel):
     name: str | None = None
     email: EmailStr | None = None
-    promotion_year: int | None = None
+    promotion: dt.date | None = None
     filiere_id: int | None = None
 
 
@@ -91,7 +91,8 @@ class StudentOut(StudentBase, ORMBase):
 
 class SessionBase(BaseModel):
     status: str
-    date: dt.date
+    start_date: dt.date
+    end_date: dt.date
 
 
 class SessionCreate(SessionBase):
@@ -100,7 +101,8 @@ class SessionCreate(SessionBase):
 
 class SessionUpdate(BaseModel):
     status: str | None = None
-    date: dt.date | None = None
+    start_date: dt.date | None = None
+    end_date: dt.date | None = None
 
 
 class SessionOut(SessionBase, ORMBase):

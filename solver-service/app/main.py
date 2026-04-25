@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,4 +25,13 @@ def healthcheck() -> dict[str, str]:
 
 @app.post("/solve", tags=["solver"])
 def solve_endpoint(payload: dict[str, Any]) -> dict[str, Any]:
-    return solve(payload)
+    print("[solver-service] SOLVER INPUT START")
+    print(json.dumps(payload, ensure_ascii=True, indent=2))
+    print("[solver-service] SOLVER INPUT END")
+
+    result = solve(payload)
+
+    print("[solver-service] SOLVER RESULT STATUS")
+    print(str(result.get("status", "UNKNOWN")))
+
+    return result
