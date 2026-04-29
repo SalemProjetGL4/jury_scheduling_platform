@@ -1,6 +1,11 @@
 import argparse
 import datetime as dt
+import json
+import re
+import unicodedata
 from decimal import Decimal
+from pathlib import Path
+from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -45,6 +50,344 @@ def clear_all(db: Session) -> None:
 def already_seeded(db: Session) -> bool:
     first_filiere = db.execute(select(Filiere.id).limit(1)).scalar_one_or_none()
     return first_filiere is not None
+
+
+_MONTHS = {
+    "janvier": 1,
+    "fevrier": 2,
+    "mars": 3,
+    "avril": 4,
+    "mai": 5,
+    "juin": 6,
+    "juillet": 7,
+    "aout": 8,
+    "septembre": 9,
+    "octobre": 10,
+    "novembre": 11,
+    "decembre": 12,
+}
+
+
+def _strip_accents(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    return "".join(ch for ch in normalized if not unicodedata.combining(ch))
+
+
+def _slugify_name(value: str) -> str:
+    text = _strip_accents(value).lower()
+    text = re.sub(r"[^a-z0-9]+", ".", text).strip(".")
+    return text or "user"
+
+
+def _build_unique_email(name: str, domain: str, used: set[str]) -> str:
+    base = _slugify_name(name)
+    candidate = f"{base}@{domain}"
+    counter = 2
+    while candidate in used:
+        candidate = f"{base}.{counter}@{domain}"
+        counter += 1
+    used.add(candidate)
+    return candidate
+
+
+def _parse_date(value: str | None) -> dt.date | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+
+    numeric = re.search(r"(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})", text)
+    if numeric:
+        day, month, year = (int(numeric.group(1)), int(numeric.group(2)), int(numeric.group(3)))
+        if year < 100:
+            year += 2000
+        try:
+            return dt.date(year, month, day)
+        except ValueError:
+            return None
+
+    normalized = _strip_accents(text.lower())
+    text_match = re.search(r"(\d{1,2})\s+([a-z]+)\s+(\d{4})", normalized)
+    if text_match:
+        day = int(text_match.group(1))
+        month_name = text_match.group(2)
+        year = int(text_match.group(3))
+        month = _MONTHS.get(month_name)
+        if month is None:
+            return None
+        try:
+            return dt.date(year, month, day)
+        except ValueError:
+            return None
+    return None
+
+
+def _normalize_time(value: str | None) -> str | None:
+    if not value:
+        return None
+    text = str(value).strip().lower().replace("h", ":")
+    match = re.match(r"^(\d{1,2}):(\d{2})$", text)
+    if not match:
+        return None
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    if hour > 23 or minute > 59:
+        return None
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _time_to_minutes(time_value: str | None) -> int:
+    if not time_value:
+        return 0
+    hour, minute = time_value.split(":")
+    return int(hour) * 60 + int(minute)
+
+
+def _period_from_time(time_value: str | None) -> str:
+    if not time_value:
+        return "morning"
+    hour = int(time_value.split(":")[0])
+    return "morning" if hour < 12 else "afternoon"
+
+
+def _promotion_from_session(label: str | None) -> dt.date | None:
+    if not label:
+        return None
+    match = re.search(r"\b(20\d{2})\b", label)
+    if not match:
+        return None
+    return dt.date(int(match.group(1)), 1, 1)
+
+
+def _load_pfe_records(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        raise FileNotFoundError(f"PFE data file not found: {path}")
+    with path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    if not isinstance(data, list):
+        raise ValueError("PFE data JSON must be a list of records")
+    return data
+
+
+def seed_from_pfe_data(
+    db: Session,
+    records: list[dict[str, Any]],
+    student_email_domain: str,
+    professor_email_domain: str,
+) -> None:
+    departments = {}
+    filieres = {}
+
+    for record in records:
+        dept_code = (record.get("department") or "").strip().upper()
+        if not dept_code:
+            continue
+        if dept_code not in departments:
+            department = Department(name=dept_code)
+            db.add(department)
+            db.flush()
+            departments[dept_code] = department
+
+            filiere_name = f"{dept_code}5"
+            filiere = Filiere(name=filiere_name, department_id=department.id)
+            db.add(filiere)
+            db.flush()
+            filieres[dept_code] = filiere
+
+    domains: dict[str, Domain] = {}
+    for record in records:
+        domain_name = (record.get("domain") or "").strip()
+        if not domain_name:
+            continue
+        key = domain_name.lower()
+        if key not in domains:
+            domain = Domain(name=domain_name)
+            db.add(domain)
+            db.flush()
+            domains[key] = domain
+    if "pfe" not in domains:
+        domain = Domain(name="PFE")
+        db.add(domain)
+        db.flush()
+        domains["pfe"] = domain
+
+    session_ranges: dict[str, dict[str, dt.date]] = {}
+    for record in records:
+        session_label = (record.get("session") or "").strip()
+        date_value = _parse_date(record.get("date"))
+        if not session_label or not date_value:
+            continue
+        entry = session_ranges.setdefault(session_label, {"min": date_value, "max": date_value})
+        entry["min"] = min(entry["min"], date_value)
+        entry["max"] = max(entry["max"], date_value)
+
+    sessions = {}
+    for label, entry in session_ranges.items():
+        session = JurySession(status="planned", start_date=entry["min"], end_date=entry["max"])
+        db.add(session)
+        db.flush()
+        sessions[label] = session
+
+    professor_emails: set[str] = set()
+    student_emails: set[str] = set()
+    professors = {}
+    students = {}
+    projects = {}
+    slots = {}
+    slot_counters: dict[tuple[int, dt.date, str], int] = {}
+    department_domain_pairs: set[tuple[int, int]] = set()
+    professor_domain_pairs: set[tuple[int, int]] = set()
+
+    def get_professor(name: str | None, dept_code: str) -> Professor | None:
+        if not name:
+            return None
+        key = name.strip().lower()
+        if key in professors:
+            return professors[key]
+        department = departments.get(dept_code)
+        if department is None:
+            return None
+        email = _build_unique_email(name, professor_email_domain, professor_emails)
+        professor = Professor(
+            name=name.strip(),
+            email=email,
+            department_id=department.id,
+            max_juries=8,
+            preferences=None,
+        )
+        db.add(professor)
+        db.flush()
+        professors[key] = professor
+        return professor
+
+    normalized_records = []
+    for record in records:
+        session_label = (record.get("session") or "").strip()
+        dept_code = (record.get("department") or "").strip().upper()
+        date_value = _parse_date(record.get("date"))
+        time_value = _normalize_time(record.get("time"))
+        room = (record.get("salle") or "").strip() or "Unknown"
+        normalized_records.append(
+            {
+                "raw": record,
+                "session_label": session_label,
+                "dept_code": dept_code,
+                "date": date_value,
+                "time": time_value,
+                "room": room,
+                "time_order": _time_to_minutes(time_value),
+            }
+        )
+
+    normalized_records.sort(key=lambda item: (item["date"] or dt.date.min, item["room"], item["time_order"]))
+
+    for item in normalized_records:
+        record = item["raw"]
+        session_label = item["session_label"]
+        dept_code = item["dept_code"]
+        session = sessions.get(session_label)
+        if not dept_code or dept_code not in filieres or session is None:
+            continue
+
+        student_name = (record.get("student_name") or "").strip()
+        if not student_name:
+            continue
+
+        student_key = student_name.lower()
+        if student_key not in students:
+            promotion = _promotion_from_session(session_label) or item["date"] or dt.date.today()
+            email = _build_unique_email(student_name, student_email_domain, student_emails)
+            student = Student(
+                name=student_name,
+                email=email,
+                promotion=promotion,
+                filiere_id=filieres[dept_code].id,
+            )
+            db.add(student)
+            db.flush()
+            students[student_key] = student
+        student = students[student_key]
+
+        supervisor_name = (record.get("insat_supervisor") or "").strip() or None
+        examiner_name = (record.get("examiner") or "").strip() or None
+        president_name = (record.get("jury_president") or "").strip() or None
+
+        supervisor = get_professor(supervisor_name, dept_code) or get_professor(president_name, dept_code) or get_professor(examiner_name, dept_code)
+        examiner = get_professor(examiner_name, dept_code)
+        president = get_professor(president_name, dept_code)
+
+        if supervisor is None:
+            continue
+
+        domain_name = (record.get("domain") or "").strip()
+        domain_key = domain_name.lower() if domain_name else "pfe"
+        domain = domains.get(domain_key) or domains.get("pfe")
+        if domain is None:
+            continue
+
+        department = departments.get(dept_code)
+        if department is not None:
+            dept_domain_key = (department.id, domain.id)
+            if dept_domain_key not in department_domain_pairs:
+                db.add(DepartmentDomain(department_id=department.id, domain_id=domain.id))
+                department_domain_pairs.add(dept_domain_key)
+
+        project_title = (record.get("project_title") or "").strip()
+        if not project_title:
+            continue
+        project_key = f"{student.id}:{project_title.lower()}"
+        if project_key not in projects:
+            project = Project(
+                title=project_title,
+                domain_id=domain.id,
+                supervisor_id=supervisor.id,
+                student_id=student.id,
+            )
+            db.add(project)
+            db.flush()
+            projects[project_key] = project
+        project = projects[project_key]
+
+        for professor in (supervisor, examiner, president):
+            if professor is None:
+                continue
+            prof_domain_key = (professor.id, domain.id)
+            if prof_domain_key not in professor_domain_pairs:
+                db.add(ProfessorDomain(professor_id=professor.id, domain_id=domain.id))
+                professor_domain_pairs.add(prof_domain_key)
+
+        if item["date"] is None or item["time"] is None:
+            continue
+
+        slot_key = (session.id, item["date"], item["room"], item["time"])
+        slot = slots.get(slot_key)
+        if slot is None:
+            counter_key = (session.id, item["date"], item["room"])
+            slot_number = slot_counters.get(counter_key, 0) + 1
+            slot_counters[counter_key] = slot_number
+            slot = Slot(
+                date=item["date"],
+                period=_period_from_time(item["time"]),
+                slot_number=slot_number,
+                room=item["room"],
+                session_id=session.id,
+            )
+            db.add(slot)
+            db.flush()
+            slots[slot_key] = slot
+
+        if examiner is None or president is None:
+            continue
+
+        db.add(
+            Assignment(
+                examiner_id=examiner.id,
+                project_id=project.id,
+                president_id=president.id,
+                slot_id=slot.id,
+            )
+        )
 
 
 def seed(db: Session) -> None:
@@ -222,6 +565,18 @@ def main() -> None:
         action="store_true",
         help="Clear existing data before seeding.",
     )
+    parser.add_argument(
+        "--pfe-data",
+        type=Path,
+        default=None,
+        help="Seed from a PFE planning JSON file (output of extract_pfe.py).",
+    )
+    parser.add_argument(
+        "--email-domain",
+        type=str,
+        default="insat.tn",
+        help="Domain for generated student/professor emails when seeding PFE data.",
+    )
     args = parser.parse_args()
 
     with SessionLocal() as db:
@@ -229,12 +584,19 @@ def main() -> None:
             clear_all(db)
             db.commit()
 
-        if not args.reset and already_seeded(db):
-            print("Seed skipped: database already contains data. Use --reset to reseed.")
-            return
-
-        seed(db)
-        db.commit()
+        if args.pfe_data:
+            if not args.reset and already_seeded(db):
+                print("Seed skipped: database already contains data. Use --reset to reseed.")
+                return
+            records = _load_pfe_records(args.pfe_data)
+            seed_from_pfe_data(db, records, args.email_domain, "insat.ucar.tn")
+            db.commit()
+        else:
+            if not args.reset and already_seeded(db):
+                print("Seed skipped: database already contains data. Use --reset to reseed.")
+                return
+            seed(db)
+            db.commit()
 
     print("Database seed completed successfully.")
 
