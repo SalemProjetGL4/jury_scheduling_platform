@@ -94,7 +94,6 @@ def evaluate_soft_constraint_violations(
     sessions_by_id = {session["id"]: session for session in data.get("sessions", [])}
     assignment_by_project = {assignment["project_id"]: assignment for assignment in assignments}
     unsatisfied: list[dict[str, Any]] = []
-    total_penalty = 0
 
     for idx, rule in enumerate(collect_rule_specs(data, "soft"), start=1):
         payload = rule.payload
@@ -153,7 +152,6 @@ def evaluate_soft_constraint_violations(
             continue
 
         penalty = rule.weight * violation
-        total_penalty += penalty
         unsatisfied.append(
             {
                 "rule_index": idx,
@@ -167,11 +165,7 @@ def evaluate_soft_constraint_violations(
             }
         )
 
-    return {
-        "custom_soft_penalty_scaled": total_penalty,
-        "custom_soft_penalty": round(total_penalty / WEIGHT_SCALE, 2),
-        "unsatisfied_soft_constraints": unsatisfied,
-    }
+    return {"unsatisfied_soft_constraints": unsatisfied}
 
 
 def _as_int(value: Any) -> int | None:

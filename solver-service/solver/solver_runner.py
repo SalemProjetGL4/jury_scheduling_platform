@@ -25,10 +25,12 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
             "failed_constraints": precheck_violations,
         }
 
-    bundle = build_model(data)
     options = data.get("solver_options", {})
     max_solutions = _as_positive_int(options.get("max_solutions"), default=1)
     include_soft_diagnostics = bool(options.get("include_soft_diagnostics", True))
+    include_conflict_refiner = bool(options.get("include_conflict_refiner", True))
+
+    bundle = build_model(data, include_conflict_refiner=include_conflict_refiner)
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 30
@@ -45,7 +47,7 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
         assignments = extract_assignments(solver, data, bundle.vars_)
         soft_eval = evaluate_soft_constraint_violations(data, assignments)
         raw_status = solver.StatusName(status)
-        quality_status = _derive_quality_status(raw_status, soft_eval["custom_soft_penalty_scaled"])
+        quality_status = _derive_quality_status(raw_status, soft_eval["unsatisfied_soft_constraints"])
         solution: dict[str, Any] = {
             "solution_index": len(solutions) + 1,
             "status": quality_status,
@@ -61,17 +63,9 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
 
     if solutions:
         best_objective = min(int(solution["objective_value"]) for solution in solutions)
-        best_soft_penalty = min(int(solution.get("custom_soft_penalty_scaled", 0)) for solution in solutions)
         for solution in solutions:
             objective_value = int(solution["objective_value"])
             solution["objective_delta_from_best"] = objective_value - best_objective
-            if "custom_soft_penalty_scaled" in solution:
-                penalty_scaled = int(solution["custom_soft_penalty_scaled"])
-                solution["custom_soft_penalty_delta_from_best_scaled"] = penalty_scaled - best_soft_penalty
-                solution["custom_soft_penalty_delta_from_best"] = round(
-                    solution["custom_soft_penalty"] - (best_soft_penalty / 100),
-                    2,
-                )
 
         first_solution = solutions[0]
         response = {
@@ -82,11 +76,19 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
             "solution_count": len(solutions),
             "solutions_limit_reached": max_solutions > 1 and len(solutions) >= max_solutions,
         }
-        if include_soft_diagnostics:
-            response["custom_soft_penalty_scaled"] = first_solution["custom_soft_penalty_scaled"]
-            response["custom_soft_penalty"] = first_solution["custom_soft_penalty"]
-            response["unsatisfied_soft_constraints"] = first_solution["unsatisfied_soft_constraints"]
         return response
+
+    conflict_report: list[dict[str, Any]] = []
+    if include_conflict_refiner and bundle.assumptions is not None:
+        conflict_report = bundle.assumptions.report_from_literals(
+            solver.SufficientAssumptionsForInfeasibility()
+        )
+
+    if conflict_report:
+        return {
+            "status": "INFEASIBLE",
+            "failed_constraints": conflict_report,
+        }
 
     return {
         "status": "INFEASIBLE",
@@ -130,10 +132,10 @@ def _as_positive_int(value: Any, *, default: int) -> int:
         return default
 
 
-def _derive_quality_status(raw_status: str, custom_soft_penalty_scaled: int) -> str:
+def _derive_quality_status(raw_status: str, unsatisfied_soft_constraints: list[dict[str, Any]]) -> str:
     normalized = raw_status.upper()
     if normalized not in {"OPTIMAL", "FEASIBLE"}:
         return normalized
-    if custom_soft_penalty_scaled <= 0:
+    if not unsatisfied_soft_constraints:
         return "SOFT_OPTIMAL"
     return "SOFT_COMPROMISED"

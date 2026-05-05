@@ -37,14 +37,17 @@ def main() -> int:
         return 1
 
     for index, solution in enumerate(solutions, start=1):
-        if "custom_soft_penalty" not in solution:
-            print(f"\nASSERTION FAILED: solution {index} is missing custom_soft_penalty.")
-            return 1
         if "unsatisfied_soft_constraints" not in solution:
             print(f"\nASSERTION FAILED: solution {index} is missing unsatisfied_soft_constraints.")
             return 1
 
-    penalties = [float(solution.get("custom_soft_penalty", 0)) for solution in solutions]
+    penalties = [
+        round(
+            sum(float(item.get("penalty_weighted", item.get("penalty", 0))) for item in solution.get("unsatisfied_soft_constraints", [])),
+            2,
+        )
+        for solution in solutions
+    ]
     print("\nSUMMARY=")
     print(f"status={result.get('status')}")
     print(f"solution_count={result.get('solution_count')}")
