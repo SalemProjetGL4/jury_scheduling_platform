@@ -1,0 +1,41 @@
+{
+  "professors": [
+    {"id": 1, "domain_id": 10, "max_juries": 3},
+    {"id": 2, "domain_id": 20, "max_juries": 3},
+    {"id": 3, "domain_id": 10, "max_juries": 3},
+    {"id": 4, "domain_id": 20, "max_juries": 3}
+  ],
+  "projects": [
+    {"id": 100, "domain_id": 10, "supervisor_id": 1},
+    {"id": 101, "domain_id": 20, "supervisor_id": 2}
+  ],
+  "sessions": [
+    {"id": 4000, "date": "2026-07-01", "period": "morning"},
+    {"id": 4001, "date": "2026-07-02", "period": "morning"}
+  ],
+  "constraints": {
+    "hard_max_juries": 3,
+    "weights": {
+      "workload": 8,
+      "expertise": 8,
+      "clustering": 3,
+      "overload": 10,
+      "custom": 5
+    },
+    "hard": [],
+    "soft": [
+      {"rule": "prefer_project_session", "project_id": 100, "session_id": 4000, "weight": 2.0},
+      {"rule": "prefer_project_session", "project_id": 101, "session_id": 4001, "weight": 2.0},
+      {"rule": "prefer_professor_role", "professor_id": 3, "project_id": 100, "role": "PRESIDENT", "weight": 2.0},
+      {"rule": "prefer_professor_role", "professor_id": 4, "project_id": 101, "role": "PRESIDENT", "weight": 2.0},
+      {"rule": "avoid_professor_session", "professor_id": 3, "session_id": 4001, "weight": 1.0}
+    ]
+  },
+  "unavailabilities": [],
+  "conflicts": [],
+  "constraint_rules": [],
+  "solver_options": {
+    "max_solutions": 5,
+    "include_soft_diagnostics": true
+  }
+}
