@@ -8,6 +8,7 @@ from pydantic import BaseModel
 class ScheduleRequest(BaseModel):
     prompt: str
     user_id: str | None = None
+    old_solver_result: dict[str, Any] | None = None
 
 
 class ScheduleAcceptedResponse(BaseModel):

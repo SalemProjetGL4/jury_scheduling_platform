@@ -6,7 +6,7 @@ from typing import Any, Literal, Optional, TypedDict
 
 
 NodeStatus = Literal["running", "success", "failed"]
-RouteType = Literal["SCHEDULE", "QUERY"]
+RouteType = Literal["GENERATE", "EDIT", "QUERY"]
 FinalStatus = Literal["running", "success", "infeasible", "error"]
 
 
@@ -32,7 +32,10 @@ class SchedulingState(TypedDict):
     recognized_constraints: list[dict[str, Any]]
     unrecognized_constraints: list[dict[str, Any]]
 
+    old_solver_result: Optional[dict[str, Any]]
     solver_result: Optional[dict[str, Any]]
+    updater_result: Optional[dict[str, Any]]
+    reflector_result: Optional[dict[str, Any]]
 
     current_node: Optional[str]
     node_history: list[NodeEvent]
@@ -44,7 +47,13 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def init_state(*, request_id: str, prompt: str, user_id: str | None) -> SchedulingState:
+def init_state(
+    *,
+    request_id: str,
+    prompt: str,
+    user_id: str | None,
+    old_solver_result: dict | None = None,
+) -> SchedulingState:
     return SchedulingState(
         request_id=request_id,
         user_id=user_id,
@@ -55,7 +64,10 @@ def init_state(*, request_id: str, prompt: str, user_id: str | None) -> Scheduli
         translator_payload=None,
         recognized_constraints=[],
         unrecognized_constraints=[],
+        old_solver_result=old_solver_result,
         solver_result=None,
+        updater_result=None,
+        reflector_result=None,
         current_node=None,
         node_history=[],
         errors=[],

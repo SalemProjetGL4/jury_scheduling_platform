@@ -12,6 +12,8 @@ class Settings(BaseSettings):
 
     translator_service_url: str = "http://localhost:8012"
     solver_service_url: str = "http://localhost:8010"
+    reflector_service_url: str = "http://localhost:8013"
+    updater_service_url: str = "http://localhost:8014"
 
     llm_provider: Literal["gemini", "groq", "local"] = "groq"
     llm_model: str = "llama-3.3-70b-versatile"

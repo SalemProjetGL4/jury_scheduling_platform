@@ -24,6 +24,8 @@ services:
     environment:
       TRANSLATOR_SERVICE_URL: http://translator-service:8012
       SOLVER_SERVICE_URL: http://solver-service:8010
+      REFLECTOR_SERVICE_URL: http://reflector-service:8013
+      UPDATER_SERVICE_URL: http://updater-service:8014
       LLM_PROVIDER: ${LLM_PROVIDER:-groq}
       LLM_MODEL: ${LLM_MODEL:-llama-3.3-70b-versatile}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
@@ -37,6 +39,24 @@ services:
         condition: service_started
       solver-service:
         condition: service_started
+      reflector-service:
+        condition: service_started
+      updater-service:
+        condition: service_started
+
+  updater-service:
+    build:
+      context: .
+      dockerfile: ./updater-service/Dockerfile
+    container_name: juriq-updater-service
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    ports:
+      - "8014:8014"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   translator-service:
     build:

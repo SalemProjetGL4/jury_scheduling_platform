@@ -25,7 +25,12 @@ def _run_workflow(request_id: str) -> None:
 @router.post("/schedule", response_model=ScheduleAcceptedResponse, status_code=status.HTTP_202_ACCEPTED)
 def schedule_workflow(payload: ScheduleRequest, background_tasks: BackgroundTasks):
     request_id = str(uuid4())
-    state: SchedulingState = init_state(request_id=request_id, prompt=payload.prompt, user_id=payload.user_id)
+    state: SchedulingState = init_state(
+        request_id=request_id,
+        prompt=payload.prompt,
+        user_id=payload.user_id,
+        old_solver_result=payload.old_solver_result,
+    )
     store.put(state)
     background_tasks.add_task(_run_workflow, request_id)
     return ScheduleAcceptedResponse(request_id=request_id, status="running")

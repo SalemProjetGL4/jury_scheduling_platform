@@ -8,7 +8,7 @@ from pydantic import BaseModel, ValidationError
 
 
 class OrchestratorOutput(BaseModel):
-    route: Literal["SCHEDULE", "QUERY"]
+    route: Literal["GENERATE", "EDIT", "QUERY"]
     intent_summary: str
 
 
