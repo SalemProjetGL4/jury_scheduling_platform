@@ -7,6 +7,24 @@ from adapters.llm_provider_adapter import get_provider
 from adapters.prompt_registry import prompt_registry
 from contracts.api_models import ReflectRequest
 from contracts.reflector_output import ReflectorOutput, safe_parse_reflector_output
+from services.evaluator import ReflectorEvaluator
+import logging
+from pathlib import Path
+
+
+# configure logger
+LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+logger = logging.getLogger("reflector")
+if not logger.handlers:
+    handler = logging.FileHandler(LOG_DIR / "reflector_debug.log")
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    handler.setFormatter(fmt)
+    logger.addHandler(handler)
+    console = logging.StreamHandler()
+    console.setFormatter(fmt)
+    logger.addHandler(console)
+    logger.setLevel(logging.INFO)
 
 
 def reflect_solver_output(request: ReflectRequest) -> dict[str, Any]:
@@ -21,9 +39,27 @@ def reflect_solver_output(request: ReflectRequest) -> dict[str, Any]:
         parsed = _apply_llm_reflection(payload)
         if parsed is not None:
             return parsed.model_dump(mode="json")
-    except Exception:
-        pass
+    except Exception as exc:
+        # Surface LLM errors clearly but return a valid ReflectorOutput dict
+        msg = str(exc) or ""
+        lower = msg.lower()
+        logger.exception("LLM reflection failed: %s", exc)
 
+        reason = "LLM_PROVIDER_FAILURE"
+        if "invalid api key" in lower or "invalid_api_key" in lower or "401" in lower or "auth" in lower:
+            reason = "LLM_AUTH_FAILURE"
+
+        # Map errors into an INFEASIBLE response with the error noted in the summary
+        return {
+            "status": "INFEASIBLE",
+            "summary": f"LLM error ({reason}): {msg}",
+            "ranking_basis": "human_cost_hierarchy",
+            "recommended_solution_index": None,
+            "compromised_solutions": [],
+            "relaxation_suggestions": [],
+        }
+
+    # If LLM was not used / returned None, use the deterministic fallback
     return _build_fallback_reflection(payload)
 
 
@@ -32,12 +68,28 @@ def _apply_llm_reflection(payload: dict[str, Any]) -> ReflectorOutput | None:
     schema_prompt, _ = prompt_registry.get_with_hash("reflector.schema.txt")
 
     provider = get_provider()
-    user_message = json.dumps(payload, ensure_ascii=True)
-    raw_output = provider.complete(
-        system_prompt=f"{system_prompt}\n\nReturn strict JSON only.\n{schema_prompt}",
-        user_message=user_message,
-    )
+    adapter_name = provider.__class__.__name__
 
+    # Tag the system prompt so we can verify which prompt was actually sent
+    tagged_system = f"REFLECTOR_V3\n{system_prompt}\n\nReturn strict JSON only.\n{schema_prompt}"
+
+    user_message = json.dumps(payload, ensure_ascii=True)
+
+    # Log what we're about to send
+    logger.info("LLM adapter: %s", adapter_name)
+    logger.info("SYSTEM PROMPT (first 300 chars): %s", tagged_system[:300].replace('\n', '\\n'))
+    logger.info("USER PAYLOAD (first 1000 chars): %s", user_message[:1000])
+
+    try:
+        raw_output = provider.complete(
+            system_prompt=tagged_system,
+            user_message=user_message,
+        )
+    except Exception as exc:  # log and re-raise
+        logger.exception("LLM provider.complete() failed: %s", exc)
+        raise
+
+    logger.info("RAW MODEL OUTPUT (first 2000 chars): %s", (raw_output or '')[:2000])
     parsed, _ = safe_parse_reflector_output(raw_output)
     return parsed
 
@@ -89,39 +141,9 @@ def _build_fallback_reflection(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_compromised_reviews(solutions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    reviews: list[dict[str, Any]] = []
-
-    for idx, solution in enumerate(solutions, start=1):
-        violations = list(solution.get("unsatisfied_soft_constraints") or [])
-        total_penalty = _solution_penalty(solution, violations)
-        violations_count = len(violations)
-
-        if not _is_compromised(solution, violations):
-            continue
-
-        rating = _score_solution(violations_count, total_penalty)
-        explanation = _build_violation_explanation(violations)
-
-        reviews.append(
-            {
-                "solution_index": int(solution.get("solution_index") or idx),
-                "rating": rating,
-                "violations_count": violations_count,
-                "total_penalty": total_penalty,
-                "violated_soft_constraints": violations,
-                "explanation": explanation,
-            }
-        )
-
-    reviews.sort(
-        key=lambda item: (
-            -item["rating"],
-            item["total_penalty"],
-            item["violations_count"],
-            item["solution_index"],
-        )
-    )
-    return reviews
+    evaluator = ReflectorEvaluator()
+    # evaluator.score_solutions already sorts and returns review dicts
+    return evaluator.score_solutions(solutions)
 
 
 def _is_compromised(solution: dict[str, Any], violations: list[dict[str, Any]]) -> bool:
@@ -208,6 +230,24 @@ def _build_relaxation_suggestions(
         seen.add(key)
 
     return suggestions
+
+
+def _build_strategic_relaxations(solver_result: dict[str, Any], solver_payload: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Use evaluator to recommend weight adjustments to get a feasible run next."""
+    solutions = solver_result.get("solutions") or []
+    evaluator = ReflectorEvaluator()
+    adjustments = evaluator.suggest_weight_adjustments(solutions, solver_payload)
+
+    # Convert adjustments to patch-like hints
+    patches: list[dict[str, Any]] = []
+    for adj in adjustments:
+        patches.append({
+            "op": "set",
+            "path": f"constraint_rules.{adj['rule']}.weight",
+            "value": adj["suggested_weight"],
+            "reason": adj["reason"],
+        })
+    return patches
 
 
 def _map_relaxation_action(constraint: str, details: dict[str, Any]) -> tuple[str, str]:

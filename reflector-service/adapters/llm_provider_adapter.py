@@ -45,21 +45,155 @@ class GroqAdapter:
         return response.choices[0].message.content or ""
 
 
+class OpenAIAdapter:
+    def complete(self, system_prompt: str, user_message: str, **kwargs: object) -> str:
+        # Support both new `openai` (>=1.0.0) and legacy module APIs
+        if not settings.openai_api_key:
+            raise ValueError("Missing openai_api_key")
+
+        import openai
+
+        ver = getattr(openai, "__version__", "0")
+        try:
+            major = int(str(ver).split(".")[0])
+        except Exception:
+            major = 0
+
+        if major >= 1:
+            # Use the new OpenAI client
+            try:
+                from openai import OpenAI as OpenAIClient
+
+                try:
+                    client = OpenAIClient(api_key=settings.openai_api_key)
+                except TypeError as te:
+                    msg = str(te)
+                    if "proxies" in msg:
+                        raise RuntimeError(
+                            "OpenAI client initialization failed due to an SDK/runtime mismatch (unexpected 'proxies' argument). "
+                            "Either pin the old OpenAI SDK (`pip install openai==0.28`) or upgrade/downgrade the client per your environment."
+                        ) from te
+                    raise
+
+                if getattr(settings, "openai_api_base", None):
+                    import os
+
+                    os.environ.setdefault("OPENAI_API_BASE", settings.openai_api_base)
+
+                response = client.chat.completions.create(
+                    model=settings.llm_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    temperature=0,
+                )
+
+                try:
+                    return response.choices[0].message.content
+                except Exception:
+                    return str(response)
+            except Exception:
+                # Surface the error for visibility upstream
+                raise
+        else:
+            # legacy openai module
+            legacy_openai = openai
+            legacy_openai.api_key = settings.openai_api_key
+            if getattr(settings, "openai_api_base", None):
+                legacy_openai.api_base = settings.openai_api_base
+
+            response = legacy_openai.ChatCompletion.create(
+                model=settings.llm_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=0,
+                request_timeout=settings.llm_timeout_seconds,
+            )
+
+            try:
+                return response.choices[0].message["content"]
+            except Exception:
+                try:
+                    return response.choices[0].text
+                except Exception:
+                    return str(response)
+
+
 class LocalAdapter:
     def complete(self, system_prompt: str, user_message: str, **kwargs: object) -> str:
-        from openai import OpenAI
+        # Detect installed openai version
+        import openai
 
-        client = OpenAI(base_url=settings.local_llm_base_url, api_key=settings.local_llm_api_key)
-        response = client.chat.completions.create(
-            model=settings.llm_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            temperature=0,
-            timeout=settings.llm_timeout_seconds,
-        )
-        return response.choices[0].message.content or ""
+        ver = getattr(openai, "__version__", "0")
+        try:
+            major = int(str(ver).split(".")[0])
+        except Exception:
+            major = 0
+
+        if major >= 1:
+            try:
+                from openai import OpenAI as OpenAIClient
+
+                try:
+                    client = OpenAIClient(api_key=settings.local_llm_api_key or settings.openai_api_key)
+                except TypeError as te:
+                    msg = str(te)
+                    if "proxies" in msg:
+                        raise RuntimeError(
+                            "OpenAI client initialization failed due to an SDK/runtime mismatch (unexpected 'proxies' argument). "
+                            "Either pin the old OpenAI SDK (`pip install openai==0.28`) or upgrade/downgrade the client per your environment."
+                        ) from te
+                    raise
+
+                if getattr(settings, "local_llm_base_url", None):
+                    import os
+
+                    os.environ.setdefault("OPENAI_API_BASE", settings.local_llm_base_url)
+
+                response = client.chat.completions.create(
+                    model=settings.llm_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    temperature=0,
+                )
+
+                try:
+                    return response.choices[0].message.content
+                except Exception:
+                    return str(response)
+            except Exception:
+                raise
+        else:
+            legacy_openai = openai
+            if getattr(settings, "local_llm_api_key", None):
+                legacy_openai.api_key = settings.local_llm_api_key
+            elif getattr(settings, "openai_api_key", None):
+                legacy_openai.api_key = settings.openai_api_key
+            if getattr(settings, "local_llm_base_url", None):
+                legacy_openai.api_base = settings.local_llm_base_url
+
+            response = legacy_openai.ChatCompletion.create(
+                model=settings.llm_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=0,
+                request_timeout=settings.llm_timeout_seconds,
+            )
+
+            try:
+                return response.choices[0].message["content"]
+            except Exception:
+                try:
+                    return response.choices[0].text
+                except Exception:
+                    return str(response)
 
 
 def get_provider() -> LLMProvider:
@@ -67,6 +201,8 @@ def get_provider() -> LLMProvider:
         return GeminiAdapter()
     if settings.llm_provider == "groq":
         return GroqAdapter()
+    if settings.llm_provider == "openai":
+        return OpenAIAdapter()
     if settings.llm_provider == "local":
         return LocalAdapter()
 
