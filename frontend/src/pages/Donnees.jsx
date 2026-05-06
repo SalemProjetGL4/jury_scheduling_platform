@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Upload, CheckCircle2, FileText, Trash2 } from 'lucide-react'
-import { professors } from '../data/mockData'
+import { apiRequest } from '../services/api'
 
 const FILE_TYPES = [
   { id: 'prof',    label: 'Encadrants / Professeurs', accept: '.csv,.xlsx', example: 'professeurs.csv' },
@@ -40,6 +40,39 @@ function DropZone({ type, uploaded, onUpload, onRemove }) {
 
 export default function Donnees() {
   const [uploaded, setUploaded] = useState({ prof: true, project: false, rooms: true, slots: false })
+  const [professors, setProfessors] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+
+    async function loadProfessors() {
+      try {
+        setLoading(true)
+        const data = await apiRequest('/professors?limit=200')
+        if (active) {
+          setProfessors(Array.isArray(data) ? data : [])
+          setError('')
+        }
+      } catch (err) {
+        if (active) {
+          setError(err.message || 'Impossible de charger les professeurs')
+          setProfessors([])
+        }
+      } finally {
+        if (active) {
+          setLoading(false)
+        }
+      }
+    }
+
+    loadProfessors()
+
+    return () => {
+      active = false
+    }
+  }, [])
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -65,21 +98,36 @@ export default function Donnees() {
         <div className="px-5 py-4 border-b border-gray-200">
           <p className="text-sm font-semibold text-gray-900">Encadrants importés ({professors.length})</p>
         </div>
+        {error && (
+          <div className="px-5 py-3 text-xs text-red-600 bg-red-50 border-b border-red-100">
+            {error}
+          </div>
+        )}
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
-              {['Nom', 'Département', 'Spécialité', 'Max jurys'].map(h => (
+              {['Nom', 'Département', 'Préférences', 'Max jurys'].map(h => (
                 <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-gray-500">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {professors.map(p => (
+            {loading && (
+              <tr>
+                <td className="px-5 py-4 text-gray-400" colSpan={4}>Chargement…</td>
+              </tr>
+            )}
+            {!loading && professors.length === 0 && (
+              <tr>
+                <td className="px-5 py-4 text-gray-400" colSpan={4}>Aucun encadrant trouvé.</td>
+              </tr>
+            )}
+            {!loading && professors.map(p => (
               <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
-                <td className="px-5 py-3 font-medium text-gray-900">{p.nom}</td>
-                <td className="px-5 py-3 text-gray-600">{p.departement}</td>
-                <td className="px-5 py-3 text-gray-600">{p.specialite}</td>
-                <td className="px-5 py-3 text-gray-600">{p.maxJurys}</td>
+                <td className="px-5 py-3 font-medium text-gray-900">{p.name}</td>
+                <td className="px-5 py-3 text-gray-600">Dept #{p.department_id}</td>
+                <td className="px-5 py-3 text-gray-600">{p.preferences?.length ? p.preferences.join(', ') : '—'}</td>
+                <td className="px-5 py-3 text-gray-600">{p.max_juries}</td>
               </tr>
             ))}
           </tbody>

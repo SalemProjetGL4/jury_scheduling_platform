@@ -1,22 +1,112 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Plus, Trash2, Shield, Target } from 'lucide-react'
-import { constraints as initialConstraints } from '../data/mockData'
+import { apiRequest } from '../services/api'
 
 export default function Contraintes() {
-  const [items, setItems] = useState(initialConstraints)
+  const [items, setItems] = useState([])
   const [newText, setNewText] = useState('')
   const [newType, setNewType] = useState('soft')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
-  function toggle(id) {
-    setItems(c => c.map(x => x.id === id ? { ...x, active: !x.active } : x))
+  useEffect(() => {
+    let active = true
+
+    async function loadRules() {
+      try {
+        setLoading(true)
+        const data = await apiRequest('/constraint-rules?limit=200')
+        if (active) {
+          const normalized = Array.isArray(data)
+            ? data.map(rule => ({
+              id: rule.id,
+              type: rule.type,
+              label: rule.name,
+              active: rule.enabled,
+              weight: rule.weight,
+              payload: rule.payload,
+            }))
+            : []
+          setItems(normalized)
+          setError('')
+        }
+      } catch (err) {
+        if (active) {
+          setError(err.message || 'Impossible de charger les contraintes')
+          setItems([])
+        }
+      } finally {
+        if (active) {
+          setLoading(false)
+        }
+      }
+    }
+
+    loadRules()
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  async function toggle(id) {
+    const target = items.find(item => item.id === id)
+    if (!target) return
+    try {
+      const updated = await apiRequest(`/constraint-rules/${id}`, {
+        method: 'PUT',
+        body: { enabled: !target.active },
+      })
+      setItems(c => c.map(x => x.id === id ? {
+        ...x,
+        active: updated.enabled,
+        label: updated.name,
+        type: updated.type,
+        weight: updated.weight,
+        payload: updated.payload,
+      } : x))
+      setError('')
+    } catch (err) {
+      setError(err.message || 'Impossible de mettre a jour la contrainte')
+    }
   }
-  function remove(id) {
-    setItems(c => c.filter(x => x.id !== id))
+
+  async function remove(id) {
+    try {
+      await apiRequest(`/constraint-rules/${id}`, { method: 'DELETE' })
+      setItems(c => c.filter(x => x.id !== id))
+      setError('')
+    } catch (err) {
+      setError(err.message || 'Impossible de supprimer la contrainte')
+    }
   }
-  function add() {
+
+  async function add() {
     if (!newText.trim()) return
-    setItems(c => [...c, { id: Date.now(), type: newType, label: newText.trim(), active: true }])
-    setNewText('')
+    try {
+      const created = await apiRequest('/constraint-rules', {
+        method: 'POST',
+        body: {
+          name: newText.trim(),
+          type: newType,
+          weight: 1,
+          payload: {},
+          enabled: true,
+        },
+      })
+      setItems(c => [...c, {
+        id: created.id,
+        type: created.type,
+        label: created.name,
+        active: created.enabled,
+        weight: created.weight,
+        payload: created.payload,
+      }])
+      setNewText('')
+      setError('')
+    } catch (err) {
+      setError(err.message || 'Impossible de creer la contrainte')
+    }
   }
 
   const hard = items.filter(x => x.type === 'hard')
@@ -57,6 +147,11 @@ export default function Contraintes() {
 
   return (
     <div className="space-y-5 max-w-2xl">
+      {error && (
+        <div className="bg-red-50 text-red-600 text-xs border border-red-100 rounded-lg px-4 py-2">
+          {error}
+        </div>
+      )}
       <Section title="Contraintes dures" icon={Shield} color="text-red-700 bg-red-50" items={hard} />
       <Section title="Contraintes souples" icon={Target} color="text-blue-700 bg-blue-50" items={soft} />
 
@@ -82,7 +177,8 @@ export default function Contraintes() {
           />
           <button
             onClick={add}
-            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg"
+            disabled={loading}
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded-lg"
           >
             <Plus size={15} /> Ajouter
           </button>

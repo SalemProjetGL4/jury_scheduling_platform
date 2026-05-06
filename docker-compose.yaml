@@ -41,22 +41,7 @@ services:
         condition: service_started
       reflector-service:
         condition: service_started
-      updater-service:
-        condition: service_started
 
-  updater-service:
-    build:
-      context: .
-      dockerfile: ./updater-service/Dockerfile
-    container_name: juriq-updater-service
-    restart: unless-stopped
-    env_file:
-      - ./backend/.env
-    ports:
-      - "8014:8014"
-    depends_on:
-      postgres:
-        condition: service_healthy
 
   translator-service:
     build:

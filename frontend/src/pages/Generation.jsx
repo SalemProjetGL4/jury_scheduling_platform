@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CheckCircle2, Circle, Loader2 } from 'lucide-react'
+import { apiRequest } from '../services/api'
 
 const STEPS = [
   { n: 1, label: 'Données',              sub: 'Importées',      done: true  },
@@ -21,13 +22,41 @@ export default function Generation() {
   const [step, setStep] = useState(3)
   const [prompt, setPrompt] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
-  function handleLaunch() {
+  function formatIsoDate(date) {
+    return date.toISOString().slice(0, 10)
+  }
+
+  function addDays(date, days) {
+    const next = new Date(date)
+    next.setDate(next.getDate() + days)
+    return next
+  }
+
+  async function handleLaunch() {
     setLoading(true)
-    setTimeout(() => {
-      setLoading(false)
+    setError('')
+    try {
+      const today = new Date()
+      const startDate = formatIsoDate(today)
+      const endDate = formatIsoDate(addDays(today, 4))
+
+      await apiRequest('/sessions', {
+        method: 'POST',
+        body: {
+          status: 'planned',
+          start_date: startDate,
+          end_date: endDate,
+        },
+      })
+
       navigate('/resultats')
-    }, 2200)
+    } catch (err) {
+      setError(err.message || 'Impossible de lancer la generation')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -84,6 +113,12 @@ export default function Generation() {
           }
           className="w-full border border-gray-300 rounded-lg px-4 py-3 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
         />
+
+        {error && (
+          <div className="mt-4 text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+            {error}
+          </div>
+        )}
 
         {/* Suggestion chips */}
         <div className="flex items-center gap-2 mt-3 flex-wrap">

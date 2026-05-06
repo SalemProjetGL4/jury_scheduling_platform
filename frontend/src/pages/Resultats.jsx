@@ -1,11 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from 'recharts'
 import { CalendarDays, Download, Star } from 'lucide-react'
-import { solutions, repartitionParJour, repartitionParSalle } from '../data/mockData'
+import {
+  solutions as mockSolutions,
+  repartitionParJour as mockRepartitionParJour,
+  repartitionParSalle as mockRepartitionParSalle,
+} from '../data/mockData'
+import { apiRequest } from '../services/api'
 
 function Stars({ n, max = 4 }) {
   return (
@@ -21,9 +26,127 @@ function Stars({ n, max = 4 }) {
   )
 }
 
+const ROOM_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#14B8A6']
+
+function formatDateLabel(value) {
+  if (!value) return ''
+  const date = new Date(`${value}T00:00:00`)
+  return date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function formatDateShort(value) {
+  if (!value) return ''
+  const date = new Date(`${value}T00:00:00`)
+  return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })
+}
+
+function countConflicts(assignments) {
+  const bySlot = new Map()
+  assignments.forEach(assignment => {
+    const list = bySlot.get(assignment.slot_id) || []
+    list.push(assignment)
+    bySlot.set(assignment.slot_id, list)
+  })
+
+  let conflicts = 0
+  bySlot.forEach(list => {
+    const seen = new Map()
+    list.forEach(assignment => {
+      ;[assignment.examiner_id, assignment.president_id].forEach(id => {
+        if (!id) return
+        const count = (seen.get(id) || 0) + 1
+        if (count > 1) {
+          conflicts += 1
+        }
+        seen.set(id, count)
+      })
+    })
+  })
+
+  return conflicts
+}
+
+function buildSolutions(sessions, slots, assignments) {
+  const slotsBySession = new Map()
+  slots.forEach(slot => {
+    const list = slotsBySession.get(slot.session_id) || []
+    list.push(slot)
+    slotsBySession.set(slot.session_id, list)
+  })
+
+  const assignmentsBySlot = new Map()
+  assignments.forEach(assignment => {
+    const list = assignmentsBySlot.get(assignment.slot_id) || []
+    list.push(assignment)
+    assignmentsBySlot.set(assignment.slot_id, list)
+  })
+
+  const derived = sessions.map(session => {
+    const sessionSlots = slotsBySession.get(session.id) || []
+    const sessionAssignments = sessionSlots.flatMap(slot => assignmentsBySlot.get(slot.id) || [])
+    const uniqueDates = new Set(sessionSlots.map(slot => slot.date))
+    const uniqueRooms = new Set(sessionSlots.map(slot => slot.room))
+    const conflicts = countConflicts(sessionAssignments)
+    const score = sessionAssignments.length ? Math.max(0, 100 - conflicts * 5) : 0
+    const stars = Math.min(4, Math.max(0, Math.round(score / 25)))
+
+    return {
+      id: session.id,
+      label: `#${session.id}`,
+      score,
+      stars,
+      conflits: conflicts,
+      jours: uniqueDates.size,
+      salles: uniqueRooms.size,
+      soutenances: sessionAssignments.length,
+      recommended: false,
+      date: formatDateLabel(session.start_date),
+    }
+  })
+
+  if (derived.length > 0) {
+    const best = derived.reduce((max, item) => item.score > max.score ? item : max, derived[0])
+    derived.forEach(item => {
+      item.recommended = item.id === best.id
+    })
+  }
+
+  return derived
+}
+
+function buildCharts(sessionId, slots, assignments) {
+  const slotsById = new Map()
+  slots.forEach(slot => slotsById.set(slot.id, slot))
+  const sessionSlots = slots.filter(slot => slot.session_id === sessionId)
+  const slotIds = new Set(sessionSlots.map(slot => slot.id))
+  const sessionAssignments = assignments.filter(item => slotIds.has(item.slot_id))
+
+  const byDate = new Map()
+  const byRoom = new Map()
+
+  sessionAssignments.forEach(item => {
+    const slot = slotsById.get(item.slot_id)
+    if (!slot) return
+    byDate.set(slot.date, (byDate.get(slot.date) || 0) + 1)
+    byRoom.set(slot.room, (byRoom.get(slot.room) || 0) + 1)
+  })
+
+  const repartitionParJour = Array.from(byDate.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, value]) => ({ jour: formatDateShort(date), value }))
+
+  const repartitionParSalle = Array.from(byRoom.entries()).map(([room, value], index) => ({
+    name: `Salle ${room}`,
+    value,
+    color: ROOM_COLORS[index % ROOM_COLORS.length],
+  }))
+
+  return { repartitionParJour, repartitionParSalle }
+}
+
 const DETAIL_TABS = ['Aperçu', 'Calendrier', 'Détails', 'Conflits']
 
-function SolutionDetail({ sol }) {
+function SolutionDetail({ sol, repartitionParJour, repartitionParSalle }) {
   const [tab, setTab] = useState('Aperçu')
   const navigate = useNavigate()
 
@@ -54,10 +177,10 @@ function SolutionDetail({ sol }) {
         {/* Quick stats */}
         <div className="grid grid-cols-4 gap-3">
           {[
-            { icon: '📋', val: '312',        lbl: 'Soutenances' },
-            { icon: '📅', val: '5',           lbl: 'Jours planifiés\nDu 20/05 au 24/05' },
-            { icon: '🏫', val: '4',           lbl: 'Salles utilisées' },
-            { icon: 'ℹ️', val: '0',           lbl: 'Conflit détecté' },
+            { icon: '📋', val: sol.soutenances, lbl: 'Soutenances' },
+            { icon: '📅', val: sol.jours,       lbl: 'Jours planifiés' },
+            { icon: '🏫', val: sol.salles,      lbl: 'Salles utilisées' },
+            { icon: 'ℹ️', val: sol.conflits,    lbl: 'Conflit détecté' },
           ].map(({ icon, val, lbl }) => (
             <div key={lbl} className="bg-gray-50 rounded-lg px-3 py-3 text-center">
               <p className="text-lg font-bold text-gray-900">{val}</p>
@@ -137,7 +260,81 @@ function SolutionDetail({ sol }) {
 
 export default function Resultats() {
   const [activeTab, setActiveTab] = useState('Solutions générées')
-  const [selected, setSelected] = useState(solutions[0])
+  const [solutions, setSolutions] = useState(mockSolutions)
+  const [selected, setSelected] = useState(mockSolutions[0])
+  const [slots, setSlots] = useState([])
+  const [assignments, setAssignments] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [usingMock, setUsingMock] = useState(true)
+
+  useEffect(() => {
+    let active = true
+
+    async function loadSolutions() {
+      try {
+        const [sessionsData, slotsData, assignmentsData] = await Promise.all([
+          apiRequest('/sessions?limit=200'),
+          apiRequest('/slots?limit=200'),
+          apiRequest('/assignments?limit=200'),
+        ])
+
+        if (!active) return
+
+        const safeSessions = Array.isArray(sessionsData) ? sessionsData : []
+        const safeSlots = Array.isArray(slotsData) ? slotsData : []
+        const safeAssignments = Array.isArray(assignmentsData) ? assignmentsData : []
+
+        if (safeSessions.length > 0) {
+          const derived = buildSolutions(safeSessions, safeSlots, safeAssignments)
+          if (derived.length > 0) {
+            setSolutions(derived)
+            setSelected(derived[0])
+            setUsingMock(false)
+          }
+          setSlots(safeSlots)
+          setAssignments(safeAssignments)
+        }
+
+        setError('')
+      } catch (err) {
+        if (active) {
+          setError(err.message || 'Impossible de charger les solutions')
+        }
+      } finally {
+        if (active) {
+          setLoading(false)
+        }
+      }
+    }
+
+    loadSolutions()
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const charts = useMemo(() => {
+    if (!selected) {
+      return { repartitionParJour: [], repartitionParSalle: [] }
+    }
+    if (usingMock) {
+      return {
+        repartitionParJour: mockRepartitionParJour,
+        repartitionParSalle: mockRepartitionParSalle,
+      }
+    }
+
+    const computed = buildCharts(selected.id, slots, assignments)
+    if (computed.repartitionParJour.length === 0 || computed.repartitionParSalle.length === 0) {
+      return {
+        repartitionParJour: mockRepartitionParJour,
+        repartitionParSalle: mockRepartitionParSalle,
+      }
+    }
+    return computed
+  }, [selected, slots, assignments, usingMock])
 
   return (
     <div className="flex gap-5 items-start">
@@ -170,10 +367,20 @@ export default function Resultats() {
             </tr>
           </thead>
           <tbody>
-            {solutions.map(sol => (
+            {loading && (
+              <tr>
+                <td className="px-4 py-4 text-gray-400" colSpan={7}>Chargement…</td>
+              </tr>
+            )}
+            {!loading && solutions.length === 0 && (
+              <tr>
+                <td className="px-4 py-4 text-gray-400" colSpan={7}>Aucune solution disponible.</td>
+              </tr>
+            )}
+            {!loading && solutions.map(sol => (
               <tr
                 key={sol.id}
-                className={`border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${selected.id === sol.id ? 'bg-blue-50' : ''}`}
+                className={`border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${selected?.id === sol.id ? 'bg-blue-50' : ''}`}
                 onClick={() => setSelected(sol)}
               >
                 <td className="px-4 py-3 font-medium text-gray-900">
@@ -221,7 +428,22 @@ export default function Resultats() {
 
       {/* Right — detail panel */}
       <div className="w-80 flex-shrink-0">
-        <SolutionDetail sol={selected} />
+        {error && (
+          <div className="mb-3 text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+            {error}
+          </div>
+        )}
+        {selected ? (
+          <SolutionDetail
+            sol={selected}
+            repartitionParJour={charts.repartitionParJour}
+            repartitionParSalle={charts.repartitionParSalle}
+          />
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 p-4 text-sm text-gray-400">
+            Aucune solution selectionnee.
+          </div>
+        )}
       </div>
     </div>
   )
