@@ -1,0 +1,52 @@
+import datetime as dt
+
+from sqlalchemy import CheckConstraint, Date, ForeignKey, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.db import Base
+
+
+class Session(Base):
+    __tablename__ = "session"
+    __table_args__ = (
+        CheckConstraint("status IN ('planned', 'in_progress', 'completed')", name="ck_session_status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    start_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+
+
+class Slot(Base):
+    __tablename__ = "slot"
+    __table_args__ = (
+        CheckConstraint("period IN ('morning', 'afternoon')", name="ck_slot_period"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    period: Mapped[str] = mapped_column(String, nullable=False)
+    slot_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    room: Mapped[str] = mapped_column(String, nullable=False)
+    session_id: Mapped[int] = mapped_column(ForeignKey("session.id", ondelete="CASCADE"), nullable=False)
+
+
+class Project(Base):
+    __tablename__ = "project"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    domain_id: Mapped[int] = mapped_column(ForeignKey("domain.id"), nullable=False)
+    supervisor_id: Mapped[int] = mapped_column(ForeignKey("professor.id"), nullable=False)
+    student_id: Mapped[int] = mapped_column(ForeignKey("student.id"), nullable=False)
+
+
+class Assignment(Base):
+    __tablename__ = "assignment"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    examiner_id: Mapped[int] = mapped_column(ForeignKey("professor.id"), nullable=False)
+    project_id: Mapped[int] = mapped_column(ForeignKey("project.id"), nullable=False)
+    president_id: Mapped[int] = mapped_column(ForeignKey("professor.id"), nullable=False)
+    slot_id: Mapped[int] = mapped_column(ForeignKey("slot.id", ondelete="CASCADE"), nullable=False)
