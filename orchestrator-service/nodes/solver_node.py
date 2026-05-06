@@ -16,6 +16,8 @@ def solver_node(state: SchedulingState) -> SchedulingState:
             mark_node_end(state, node_name, status="failed", summary="Missing translator payload")
             return state
 
+        payload = dict(payload)
+        payload["request_id"] = state["request_id"]
         result = solve_via_gateway(payload)
         state["solver_result"] = result
         state["final_status"] = "infeasible" if result.get("status") == "INFEASIBLE" else "success"

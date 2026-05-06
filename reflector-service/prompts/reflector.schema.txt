@@ -1,0 +1,37 @@
+Return this JSON object exactly:
+
+{
+  "status": "COMPROMISED",
+  "summary": "Short summary",
+  "ranking_basis": "fewer_soft_violations",
+  "recommended_solution_index": 1,
+  "compromised_solutions": [
+    {
+      "solution_index": 1,
+      "rating": 90,
+      "violations_count": 1,
+      "total_penalty": 1.5,
+      "violated_soft_constraints": [
+        {
+          "rule": "prefer_project_session",
+          "payload": {"project_id": 201, "session_id": 5001},
+          "penalty_weighted": 1.0
+        }
+      ],
+      "explanation": "One soft violation for preferred session."
+    }
+  ],
+  "relaxation_suggestions": [
+    {
+      "constraint": "professor_unavailable",
+      "action": "relax_unavailability",
+      "reason": "Allow professor 3 to be scheduled in the afternoon.",
+      "details": {"professor_id": 3, "date": "2026-09-02", "period": "afternoon"},
+      "patch": {
+        "op": "remove",
+        "path": "unavailabilities",
+        "match": {"professor_id": 3, "date": "2026-09-02", "period": "afternoon"}
+      }
+    }
+  ]
+}

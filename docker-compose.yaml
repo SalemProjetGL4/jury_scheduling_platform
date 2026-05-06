@@ -59,14 +59,38 @@ services:
       postgres:
         condition: service_healthy
 
+  reflector-service:
+    build:
+      context: .
+      dockerfile: ./reflector-service/Dockerfile
+    container_name: juriq-reflector-service
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-groq}
+      LLM_MODEL: ${LLM_MODEL:-llama-3.3-70b-versatile}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
+      LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-local}
+    ports:
+      - "8013:8013"
+
   solver-service:
     build:
       context: .
       dockerfile: ./solver-service/Dockerfile
     container_name: juriq-solver-service
     restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      REDIS_TTL_SECONDS: ${REDIS_TTL_SECONDS:-604800}
     ports:
       - "8010:8010"
+    depends_on:
+      redis:
+        condition: service_started
 
   frontend:
     build:
@@ -104,6 +128,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: juriq-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
 
 volumes:
   juriq-data:
