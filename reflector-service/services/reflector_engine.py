@@ -38,7 +38,9 @@ def reflect_solver_output(request: ReflectRequest) -> dict[str, Any]:
     try:
         parsed = _apply_llm_reflection(payload)
         if parsed is not None:
-            return parsed.model_dump(mode="json")
+            result = parsed.model_dump(mode="json")
+            _write_scores_to_redis(request, result)
+            return result
     except Exception as exc:
         # Surface LLM errors clearly but return a valid ReflectorOutput dict
         msg = str(exc) or ""
@@ -60,7 +62,9 @@ def reflect_solver_output(request: ReflectRequest) -> dict[str, Any]:
         }
 
     # If LLM was not used / returned None, use the deterministic fallback
-    return _build_fallback_reflection(payload)
+    result = _build_fallback_reflection(payload)
+    _write_scores_to_redis(request, result)
+    return result
 
 
 def _apply_llm_reflection(payload: dict[str, Any]) -> ReflectorOutput | None:
@@ -138,6 +142,82 @@ def _build_fallback_reflection(payload: dict[str, Any]) -> dict[str, Any]:
         "compromised_solutions": [],
         "relaxation_suggestions": [],
     }
+
+
+def _write_scores_to_redis(request: ReflectRequest, reflector_result: dict[str, Any]) -> None:
+    """Update the existing solver Redis blob with reflector score fields.
+
+    The solver already stores the full result at `solver:result:{request_id}`.
+    We enrich each solution in that stored payload with reflector scoring output.
+    """
+    request_id = str(request.request_id or "").strip()
+    if not request_id:
+        return
+
+    evaluator = ReflectorEvaluator()
+    redis_client = getattr(evaluator, "redis_client", None)
+    if not redis_client:
+        return
+
+    key = f"solver:result:{request_id}"
+    try:
+        raw = redis_client.get(key)
+        if not raw:
+            return
+
+        stored = json.loads(raw)
+        has_nested_result = isinstance(stored, dict) and "result" in stored and isinstance(stored.get("result"), dict)
+        solver_result = stored["result"] if has_nested_result else stored
+
+        solutions = list((solver_result or {}).get("solutions") or [])
+        if not solutions:
+            return
+
+        scored_reviews = evaluator.score_solutions(solutions)
+        review_by_index = {int(review["solution_index"]): review for review in scored_reviews}
+
+        enriched_solutions: list[dict[str, Any]] = []
+        for solution in solutions:
+            index = int(solution.get("solution_index") or 0)
+            review = review_by_index.get(index)
+            if review:
+                enriched_solution = dict(solution)
+                enriched_solution.update(
+                    {
+                        "rating": review.get("rating"),
+                        "violations_count": review.get("violations_count"),
+                        "total_penalty": review.get("total_penalty"),
+                        "violated_soft_constraints": review.get("violated_soft_constraints", []),
+                        "explanation": review.get("explanation"),
+                    }
+                )
+                enriched_solutions.append(enriched_solution)
+            else:
+                enriched_solutions.append(dict(solution))
+
+        solver_result["solutions"] = enriched_solutions
+        solver_result["scored_solutions"] = scored_reviews
+        solver_result["reflector_result"] = reflector_result
+
+        if has_nested_result:
+            stored["result"] = solver_result
+        else:
+            stored = solver_result
+
+        payload = json.dumps(stored, ensure_ascii=True)
+        try:
+            current_ttl = redis_client.ttl(key)
+        except Exception:
+            current_ttl = -1
+
+        if current_ttl and current_ttl > 0:
+            redis_client.setex(key, current_ttl, payload)
+        else:
+            redis_client.set(key, payload)
+
+        logger.info("Wrote reflector scores back to Redis key: %s", key)
+    except Exception as exc:
+        logger.exception("Failed to write reflector scores to Redis for %s: %s", request_id, exc)
 
 
 def _build_compromised_reviews(solutions: list[dict[str, Any]]) -> list[dict[str, Any]]:
