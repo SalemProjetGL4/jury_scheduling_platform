@@ -38,12 +38,87 @@ function slotTime(period, slotNumber) {
   }
 }
 
+function parseDate(value) {
+  if (!value) return null
+  const date = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(date.getTime())) {
+    return null
+  }
+  return date
+}
+
+function startOfWeek(date) {
+  const day = date.getDay()
+  const diff = (day + 6) % 7
+  const start = new Date(date)
+  start.setDate(date.getDate() - diff)
+  start.setHours(0, 0, 0, 0)
+  return start
+}
+
+function endOfWeek(start) {
+  const end = new Date(start)
+  end.setDate(start.getDate() + 6)
+  return end
+}
+
+function formatRangeLabel(start, end) {
+  if (!start || !end) return 'Semaine'
+  const startLabel = start.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })
+  const endLabel = end.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
+  const cap = text => text.charAt(0).toUpperCase() + text.slice(1)
+  return `${cap(startLabel)} – ${cap(endLabel)}`
+}
+
+function buildWeeksFromDays(days) {
+  if (!days.length) return []
+  const parsed = days.map(day => ({ day, date: parseDate(day.key) }))
+  if (parsed.some(item => !item.date)) {
+    return [{ key: 'all', label: 'Semaine', start: null, end: null, days }]
+  }
+
+  const weeks = new Map()
+  parsed
+    .sort((a, b) => a.date - b.date)
+    .forEach(item => {
+      const start = startOfWeek(item.date)
+      const key = start.toISOString().slice(0, 10)
+      if (!weeks.has(key)) {
+        const end = endOfWeek(start)
+        weeks.set(key, {
+          key,
+          start,
+          end,
+          label: formatRangeLabel(start, end),
+          days: [],
+        })
+      }
+      weeks.get(key).days.push(item.day)
+    })
+
+  return Array.from(weeks.values()).sort((a, b) => a.start - b.start)
+}
+
+function findWeekIndexForDate(weeks, value) {
+  const date = parseDate(value)
+  if (!date) return -1
+  return weeks.findIndex(week => week.start && week.end && date >= week.start && date <= week.end)
+}
+
+function formatRoomLabel(room) {
+  const text = String(room ?? '').trim()
+  if (!text) return 'Salle'
+  if (text.toLowerCase().startsWith('salle')) return text
+  return `Salle ${text}`
+}
+
 function buildCalendarData(slots, assignments, professors) {
   const slotsById = new Map(slots.map(slot => [slot.id, slot]))
   const profById = new Map(professors.map(prof => [prof.id, prof]))
 
   const uniqueDates = Array.from(new Set(slots.map(slot => slot.date))).sort()
   const uniqueRooms = Array.from(new Set(slots.map(slot => slot.room)))
+    .sort((a, b) => String(a).localeCompare(String(b)))
 
   const days = uniqueDates.map(date => ({
     key: date,
@@ -53,7 +128,7 @@ function buildCalendarData(slots, assignments, professors) {
 
   const rooms = uniqueRooms.map(room => ({
     id: room,
-    label: `Salle ${room}`,
+    label: formatRoomLabel(room),
     places: null,
   }))
 
@@ -79,11 +154,36 @@ function buildCalendarData(slots, assignments, professors) {
   return { days, rooms, events }
 }
 
+function buildSessionOptions(sessions, slots, assignments) {
+  const slotToSession = new Map(slots.map(slot => [slot.id, slot.session_id]))
+  const counts = new Map()
+
+  assignments.forEach(item => {
+    const sessionId = slotToSession.get(item.slot_id)
+    if (!sessionId) return
+    counts.set(sessionId, (counts.get(sessionId) || 0) + 1)
+  })
+
+  return sessions.map(session => ({
+    id: session.id,
+    label: `Session #${session.id}`,
+    count: counts.get(session.id) || 0,
+    range: formatRangeLabel(parseDate(session.start_date), parseDate(session.end_date)),
+  }))
+}
+
 export default function Calendrier() {
   const [view, setView] = useState('Semaine')
-  const [days, setDays] = useState(mockDays)
   const [rooms, setRooms] = useState(mockRooms)
   const [events, setEvents] = useState(mockEvents)
+  const [weeks, setWeeks] = useState(buildWeeksFromDays(mockDays))
+  const [weekIndex, setWeekIndex] = useState(0)
+  const [sessions, setSessions] = useState([])
+  const [selectedSessionId, setSelectedSessionId] = useState(null)
+  const [sessionOptions, setSessionOptions] = useState([])
+  const [slots, setSlots] = useState([])
+  const [assignments, setAssignments] = useState([])
+  const [professors, setProfessors] = useState([])
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -91,7 +191,8 @@ export default function Calendrier() {
 
     async function loadCalendar() {
       try {
-        const [slotsData, assignmentsData, professorsData] = await Promise.all([
+        const [sessionsData, slotsData, assignmentsData, professorsData] = await Promise.all([
+          apiRequest('/sessions?limit=200'),
           apiRequest('/slots?limit=200'),
           apiRequest('/assignments?limit=200'),
           apiRequest('/professors?limit=200'),
@@ -99,15 +200,23 @@ export default function Calendrier() {
 
         if (!active) return
 
+        const safeSessions = Array.isArray(sessionsData) ? sessionsData : []
         const safeSlots = Array.isArray(slotsData) ? slotsData : []
         const safeAssignments = Array.isArray(assignmentsData) ? assignmentsData : []
         const safeProfessors = Array.isArray(professorsData) ? professorsData : []
 
-        if (safeSlots.length > 0 && safeAssignments.length > 0) {
-          const data = buildCalendarData(safeSlots, safeAssignments, safeProfessors)
-          setDays(data.days.length ? data.days : mockDays)
-          setRooms(data.rooms.length ? data.rooms : mockRooms)
-          setEvents(data.events.length ? data.events : mockEvents)
+        const sortedSessions = safeSessions
+          .slice()
+          .sort((a, b) => new Date(a.start_date) - new Date(b.start_date))
+
+        setSessions(sortedSessions)
+        setSlots(safeSlots)
+        setAssignments(safeAssignments)
+        setProfessors(safeProfessors)
+
+        if (sortedSessions.length > 0) {
+          const latestSession = sortedSessions[sortedSessions.length - 1]
+          setSelectedSessionId(current => current ?? latestSession.id)
         }
 
         setError('')
@@ -125,6 +234,56 @@ export default function Calendrier() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!slots.length) {
+      setWeeks(buildWeeksFromDays(mockDays))
+      setRooms(mockRooms)
+      setEvents(mockEvents)
+      setSessionOptions([])
+      return
+    }
+
+    const options = buildSessionOptions(sessions, slots, assignments)
+    setSessionOptions(options)
+
+    const activeSessionId = selectedSessionId ?? options[options.length - 1]?.id
+    const sessionSlots = activeSessionId
+      ? slots.filter(slot => slot.session_id === activeSessionId)
+      : slots
+    const slotIds = new Set(sessionSlots.map(slot => slot.id))
+    const sessionAssignments = assignments.filter(item => slotIds.has(item.slot_id))
+    const data = buildCalendarData(sessionSlots, sessionAssignments, professors)
+
+    setRooms(data.rooms.length ? data.rooms : mockRooms)
+    setEvents(data.events)
+
+    const nextWeeks = buildWeeksFromDays(data.days)
+    setWeeks(nextWeeks.length ? nextWeeks : buildWeeksFromDays(mockDays))
+    setWeekIndex(current => {
+      if (!nextWeeks.length) return 0
+      return Math.min(current, nextWeeks.length - 1)
+    })
+  }, [sessions, slots, assignments, professors, selectedSessionId])
+
+  useEffect(() => {
+    setWeekIndex(0)
+  }, [selectedSessionId])
+
+  const activeWeek = weeks[weekIndex] || weeks[0]
+  const visibleDays = activeWeek?.days || []
+  const weekLabel = activeWeek?.label || 'Semaine'
+  const selectedSession = sessionOptions.find(session => session.id === selectedSessionId)
+  const canPrev = weekIndex > 0
+  const canNext = weekIndex < weeks.length - 1
+
+  function handleToday() {
+    const todayKey = new Date().toISOString().slice(0, 10)
+    const index = findWeekIndexForDate(weeks, todayKey)
+    if (index >= 0) {
+      setWeekIndex(index)
+    }
+  }
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       {/* Calendar toolbar */}
@@ -135,14 +294,45 @@ export default function Calendrier() {
           </span>
         )}
         <div className="flex items-center gap-1">
-          <button className="p-1.5 rounded hover:bg-gray-100"><ChevronLeft size={16} /></button>
-          <button className="p-1.5 rounded hover:bg-gray-100"><ChevronRight size={16} /></button>
+          <button
+            className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-40"
+            onClick={() => setWeekIndex(idx => Math.max(0, idx - 1))}
+            disabled={!canPrev}
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <button
+            className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-40"
+            onClick={() => setWeekIndex(idx => Math.min(weeks.length - 1, idx + 1))}
+            disabled={!canNext}
+          >
+            <ChevronRight size={16} />
+          </button>
         </div>
-        <span className="text-sm font-semibold text-gray-700 min-w-[140px]">20 – 24 Mai 2024</span>
-        <button className="text-xs border border-gray-300 rounded-md px-3 py-1.5 hover:bg-gray-50">
+        <span className="text-sm font-semibold text-gray-700 min-w-[160px]">{weekLabel}</span>
+        {selectedSession && (
+          <span className="text-xs text-gray-500">{selectedSession.label} · {selectedSession.count} PFE</span>
+        )}
+        <button
+          className="text-xs border border-gray-300 rounded-md px-3 py-1.5 hover:bg-gray-50"
+          onClick={handleToday}
+        >
           Aujourd'hui
         </button>
         <div className="flex-1" />
+        {sessionOptions.length > 0 && (
+          <select
+            className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white"
+            value={selectedSessionId ?? ''}
+            onChange={event => setSelectedSessionId(Number(event.target.value))}
+          >
+            {sessionOptions.map(option => (
+              <option key={option.id} value={option.id}>
+                {option.label} · {option.count} PFE
+              </option>
+            ))}
+          </select>
+        )}
         <select className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white">
           <option>Toutes les salles</option>
           {rooms.map(s => <option key={s.id}>{s.label}</option>)}
@@ -168,59 +358,67 @@ export default function Calendrier() {
       </div>
 
       {/* Grid */}
-      <div className="overflow-x-auto">
-        <table className="w-full table-fixed text-xs">
-          <colgroup>
-            <col className="w-36" />
-            {days.map(d => <col key={d.key} />)}
-          </colgroup>
+      {visibleDays.length === 0 || rooms.length === 0 ? (
+        <div className="px-6 py-10 text-sm text-gray-400">
+          Aucune soutenance planifiee pour cette session.
+        </div>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full table-fixed text-xs">
+              <colgroup>
+                <col className="w-36" />
+                {visibleDays.map(d => <col key={d.key} />)}
+              </colgroup>
 
-          {/* Day headers */}
-          <thead>
-            <tr className="border-b border-gray-200 bg-gray-50">
-              <th className="text-left px-4 py-3 text-gray-400 font-normal" />
-              {days.map(d => (
-                <th key={d.key} className="text-center px-3 py-3 font-semibold text-gray-700">
-                  {d.label} <span className="text-gray-400 font-normal">{d.date}</span>
-                </th>
-              ))}
-            </tr>
-          </thead>
+              {/* Day headers */}
+              <thead>
+                <tr className="border-b border-gray-200 bg-gray-50">
+                  <th className="text-left px-4 py-3 text-gray-400 font-normal" />
+                  {visibleDays.map(d => (
+                    <th key={d.key} className="text-center px-3 py-3 font-semibold text-gray-700">
+                      {d.label} <span className="text-gray-400 font-normal">{d.date}</span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
 
-          <tbody>
-            {rooms.map((salle, si) => (
-              <tr key={salle.id} className={si < rooms.length - 1 ? 'border-b border-gray-200' : ''}>
-                {/* Room label */}
-                <td className="px-4 py-3 align-top border-r border-gray-100">
-                  <p className="font-semibold text-gray-800">{salle.label}</p>
-                  <p className="text-gray-400">({salle.places ?? '—'} places)</p>
-                </td>
-                {/* Day cells */}
-                {days.map(day => {
-                  const dayEvents = events.filter(
-                    e => e.salle === salle.id && e.day === day.key
-                  )
-                  return (
-                    <td key={day.key} className="px-2 py-2 align-top min-w-[120px]">
-                      {dayEvents.map(ev => <EventCard key={ev.id} event={ev} />)}
+              <tbody>
+                {rooms.map((salle, si) => (
+                  <tr key={salle.id} className={si < rooms.length - 1 ? 'border-b border-gray-200' : ''}>
+                    {/* Room label */}
+                    <td className="px-4 py-3 align-top border-r border-gray-100">
+                      <p className="font-semibold text-gray-800">{salle.label}</p>
+                      <p className="text-gray-400">({salle.places ?? '—'} places)</p>
                     </td>
-                  )
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Legend */}
-      <div className="flex items-center gap-5 px-5 py-3 border-t border-gray-200">
-        {Object.entries(JURY_COLORS).map(([n, c]) => (
-          <div key={n} className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: c.dot }} />
-            <span className="text-xs text-gray-600">Jury {n}</span>
+                    {/* Day cells */}
+                    {visibleDays.map(day => {
+                      const dayEvents = events.filter(
+                        e => e.salle === salle.id && e.day === day.key
+                      )
+                      return (
+                        <td key={day.key} className="px-2 py-2 align-top min-w-[120px]">
+                          {dayEvents.map(ev => <EventCard key={ev.id} event={ev} />)}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        ))}
-      </div>
+
+          {/* Legend */}
+          <div className="flex items-center gap-5 px-5 py-3 border-t border-gray-200">
+            {Object.entries(JURY_COLORS).map(([n, c]) => (
+              <div key={n} className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: c.dot }} />
+                <span className="text-xs text-gray-600">Jury {n}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }
