@@ -3436,3 +3436,277 @@ groq.AuthenticationError: Error code: 401 - {'error': {'message': 'Invalid API K
         }
       ],
       "explanation": "Prof. Nguyen is not assigned their preferred role as President 
+2026-05-06 19:19:15,943 INFO LLM adapter: OpenAIAdapter
+2026-05-06 19:19:15,944 INFO SYSTEM PROMPT (first 300 chars): REFLECTOR_V3\nYou are the Reflector — the strategic supervisor of a jury scheduling platform. You operate between the CP-SAT Solver and the human administrator. Your decisions directly determine whether a schedule is accepted, retried with adjusted parameters, or escalated for human intervention.\n\nYo
+2026-05-06 19:19:15,944 INFO USER PAYLOAD (first 1000 chars): {"request_id": "test-optimal", "solver_result": {"status": "OPTIMAL", "quality_status": "SOFT_OPTIMAL", "assignments": [{"project_id": 200, "project_title": "Autonomous Vehicle Path Planning", "session_id": 5000, "date": "2026-09-01", "period": "morning", "roles": {"supervisor": {"id": 1, "name": "Prof. Dubois"}, "president": {"id": 2, "name": "Prof. Mansouri"}, "examiner": {"id": 3, "name": "Prof. Chen"}}}], "solutions": [{"solution_index": 1, "status": "SOFT_OPTIMAL", "raw_status": "OPTIMAL", "objective_value": 0, "assignments": [{"project_id": 200, "project_title": "Autonomous Vehicle Path Planning", "session_id": 5000, "date": "2026-09-01", "period": "morning", "roles": {"supervisor": {"id": 1, "name": "Prof. Dubois"}, "president": {"id": 2, "name": "Prof. Mansouri"}, "examiner": {"id": 3, "name": "Prof. Chen"}}}], "unsatisfied_soft_constraints": [], "objective_delta_from_best": 0}], "solution_count": 1, "solutions_limit_reached": false, "unsatisfied_soft_constraints": []}, "solver
+2026-05-06 19:19:22,070 INFO RAW MODEL OUTPUT (first 2000 chars): ```json
+{
+  "status": "OPTIMAL",
+  "summary": "The schedule is optimal with no penalties.",
+  "ranking_basis": "human_cost_hierarchy",
+  "recommended_solution_index": 1,
+  "compromised_solutions": [],
+  "relaxation_suggestions": [],
+  "recommended_option": null,
+  "recommendation_rationale": null,
+  "human_explanation": null,
+  "iteration_state": {
+    "retry_count": 0,
+    "previously_relaxed": [],
+    "retries_exhausted": false
+  }
+}
+```
+2026-05-06 19:19:24,134 INFO LLM adapter: OpenAIAdapter
+2026-05-06 19:19:24,134 INFO SYSTEM PROMPT (first 300 chars): REFLECTOR_V3\nYou are the Reflector — the strategic supervisor of a jury scheduling platform. You operate between the CP-SAT Solver and the human administrator. Your decisions directly determine whether a schedule is accepted, retried with adjusted parameters, or escalated for human intervention.\n\nYo
+2026-05-06 19:19:24,135 INFO USER PAYLOAD (first 1000 chars): {"request_id": "test-infeasible-supervisor-binding", "solver_result": {"status": "INFEASIBLE", "failed_constraints": [{"constraint": "supervisor_binding", "reason": "Declared supervisor is unavailable in the only valid session for this project", "details": {"project_id": 201, "project_title": "Deep Learning for Medical Imaging", "supervisor_id": 7, "supervisor_name": "Prof. Martin", "session_id": 5001, "session_date": "2026-09-02", "session_period": "morning"}}, {"constraint": "professor_unavailable", "reason": "Professor declared a personal hard unavailability for this slot", "details": {"professor_id": 7, "professor_name": "Prof. Martin", "date": "2026-09-02", "period": "morning", "unavailability_type": "personal_hard_constraint"}}], "trace": "Project 201 ('Deep Learning for Medical Imaging') requires Prof. Martin as supervisor via supervisor_binding constraint. Prof. Martin has declared personal unavailability on 2026-09-02 morning. No alternative session exists for project 201. Bot
+2026-05-06 19:19:31,625 INFO RAW MODEL OUTPUT (first 2000 chars): ```json
+{
+  "status": "INFEASIBLE",
+  "summary": "The schedule is infeasible due to a supervisor binding conflict with Prof. Martin's unavailability.",
+  "ranking_basis": "human_cost_hierarchy",
+  "recommended_solution_index": null,
+  "compromised_solutions": [],
+  "relaxation_suggestions": [
+    {
+      "option_label": "Option A — Cheapest",
+      "constraint": "professor_unavailable",
+      "action": "relax_unavailability",
+      "loss_score": "MEDIUM-HIGH",
+      "reason": "Allow Prof. Martin to be scheduled despite his personal unavailability on 2026-09-02 morning.",
+      "what_is_lost": "Overrides Prof. Martin's personal constraint, potentially causing personal inconvenience.",
+      "details": {
+        "professor_id": 7,
+        "date": "2026-09-02",
+        "period": "morning"
+      },
+      "patch": {
+        "op": "remove",
+        "path": "unavailabilities",
+        "match": {
+          "professor_id": 7,
+          "date": "2026-09-02",
+          "period": "morning"
+        }
+      }
+    },
+    {
+      "option_label": "Option B — Alternative",
+      "constraint": "supervisor_binding",
+      "action": "relax_supervisor_binding",
+      "loss_score": "MEDIUM",
+      "reason": "Allow a different qualified professor to supervise the project 'Deep Learning for Medical Imaging'.",
+      "what_is_lost": "A different professor chairs the project, which may impact academic quality.",
+      "details": {
+        "project_id": 201,
+        "supervisor_id": 7
+      },
+      "patch": {
+        "op": "remove",
+        "path": "supervisor_bindings",
+        "match": {
+          "project_id": 201,
+          "supervisor_id": 7
+        }
+      }
+    }
+  ],
+  "recommended_option": "Option B",
+  "recommendation_rationale": "Option B preserves Prof. Martin's personal constraints while allowing the project to proceed with a different supervisor.",
+  "human_explanation": "Project 'Deep Learning for Medical Imaging' requires Prof. Martin as the supervisor, but he is unavailable o
+2026-05-06 19:19:33,668 INFO LLM adapter: OpenAIAdapter
+2026-05-06 19:19:33,669 INFO SYSTEM PROMPT (first 300 chars): REFLECTOR_V3\nYou are the Reflector — the strategic supervisor of a jury scheduling platform. You operate between the CP-SAT Solver and the human administrator. Your decisions directly determine whether a schedule is accepted, retried with adjusted parameters, or escalated for human intervention.\n\nYo
+2026-05-06 19:19:33,670 INFO USER PAYLOAD (first 1000 chars): {"request_id": "test-infeasible-conflict-chain", "solver_result": {"status": "INFEASIBLE", "failed_constraints": [{"constraint": "conflict_of_interest", "reason": "All valid professor combinations for this jury include a conflicting pair", "details": {"project_id": 202, "project_title": "Quantum Computing Optimization", "conflict_pairs": [{"professor_a_id": 8, "professor_a_name": "Prof. Benali", "professor_b_id": 9, "professor_b_name": "Prof. Torres", "conflict_reason": "Co-authored disputed paper \u2014 professional conflict declared"}]}}, {"constraint": "supervisor_binding", "reason": "Prof. Torres is the declared supervisor and cannot be replaced without relaxation", "details": {"project_id": 202, "project_title": "Quantum Computing Optimization", "supervisor_id": 9, "supervisor_name": "Prof. Torres", "session_id": 5002, "session_date": "2026-09-03", "session_period": "afternoon"}}, {"constraint": "role_unique_per_project", "reason": "No valid PRESIDENT can be assigned without inclu
+2026-05-06 19:19:40,678 INFO RAW MODEL OUTPUT (first 2000 chars): ```json
+{
+  "status": "INFEASIBLE",
+  "summary": "Conflict chain deadlock prevents valid jury formation for project 202.",
+  "ranking_basis": "human_cost_hierarchy",
+  "recommended_solution_index": null,
+  "compromised_solutions": [],
+  "relaxation_suggestions": [
+    {
+      "option_label": "Option A — Cheapest",
+      "constraint": "conflict_of_interest",
+      "action": "relax_conflict_of_interest",
+      "loss_score": "HIGH",
+      "reason": "Allow Prof. Benali and Prof. Torres to serve on the same jury despite their professional conflict.",
+      "what_is_lost": "Two professors with a declared professional conflict will serve together, which may affect the jury's impartiality.",
+      "details": {
+        "professor_a_id": 8,
+        "professor_a_name": "Prof. Benali",
+        "professor_b_id": 9,
+        "professor_b_name": "Prof. Torres",
+        "conflict_reason": "Co-authored disputed paper — professional conflict declared"
+      },
+      "patch": {
+        "op": "remove",
+        "path": "hard_constraints",
+        "match": {
+          "constraint": "conflict_of_interest",
+          "professor_a_id": 8,
+          "professor_b_id": 9
+        }
+      }
+    },
+    {
+      "option_label": "Option B — Alternative",
+      "constraint": "supervisor_binding",
+      "action": "relax_supervisor_binding",
+      "loss_score": "MEDIUM",
+      "reason": "Allow a different qualified professor to replace Prof. Torres as the supervisor for project 202.",
+      "what_is_lost": "The project's declared supervisor will be replaced, potentially impacting the academic quality and continuity.",
+      "details": {
+        "project_id": 202,
+        "supervisor_id": 9,
+        "supervisor_name": "Prof. Torres"
+      },
+      "patch": {
+        "op": "remove",
+        "path": "supervisor_bindings",
+        "match": {
+          "project_id": 202,
+          "supervisor_id": 9
+        }
+      }
+    }
+  ],
+  "recommended_option": "Option B",
+  "recommendation_rationale": "Option B prese
+2026-05-06 19:19:42,746 INFO LLM adapter: OpenAIAdapter
+2026-05-06 19:19:42,747 INFO SYSTEM PROMPT (first 300 chars): REFLECTOR_V3\nYou are the Reflector — the strategic supervisor of a jury scheduling platform. You operate between the CP-SAT Solver and the human administrator. Your decisions directly determine whether a schedule is accepted, retried with adjusted parameters, or escalated for human intervention.\n\nYo
+2026-05-06 19:19:42,747 INFO USER PAYLOAD (first 1000 chars): {"request_id": "test-infeasible-overloaded-professor", "solver_result": {"status": "INFEASIBLE", "failed_constraints": [{"constraint": "half_day_exclusivity", "reason": "Professor is required as supervisor in both morning and afternoon sessions on the same day", "details": {"professor_id": 5, "professor_name": "Prof. Karim", "date": "2026-09-04", "morning_sessions": [{"session_id": 5003, "project_id": 203, "project_title": "NLP Sentiment Analysis"}], "afternoon_sessions": [{"session_id": 5004, "project_id": 204, "project_title": "Federated Learning Privacy"}, {"session_id": 5005, "project_id": 205, "project_title": "Graph Neural Networks"}]}}, {"constraint": "supervisor_binding", "reason": "Prof. Karim is declared supervisor for all 3 projects and cannot be substituted without relaxation", "details": {"professor_id": 5, "professor_name": "Prof. Karim", "supervised_projects": [{"project_id": 203, "project_title": "NLP Sentiment Analysis", "session_id": 5003}, {"project_id": 204, "projec
+2026-05-06 19:19:50,550 INFO RAW MODEL OUTPUT (first 2000 chars): ```json
+{
+  "status": "INFEASIBLE",
+  "summary": "Prof. Karim is overloaded due to half_day_exclusivity and supervisor_binding constraints.",
+  "ranking_basis": "human_cost_hierarchy",
+  "recommended_solution_index": null,
+  "compromised_solutions": [],
+  "relaxation_suggestions": [
+    {
+      "option_label": "Option A — Cheapest",
+      "constraint": "half_day_exclusivity",
+      "action": "relax_half_day_exclusivity",
+      "loss_score": "LOW",
+      "reason": "Allow Prof. Karim to supervise both morning and afternoon sessions on 2026-09-04.",
+      "what_is_lost": "Prof. Karim will have a longer working day, which may be tiring.",
+      "details": {
+        "professor_id": 5,
+        "professor_name": "Prof. Karim",
+        "date": "2026-09-04"
+      },
+      "patch": {
+        "op": "remove",
+        "path": "hard_constraints",
+        "match": {
+          "constraint": "half_day_exclusivity",
+          "professor_id": 5,
+          "date": "2026-09-04"
+        }
+      }
+    },
+    {
+      "option_label": "Option B — Alternative",
+      "constraint": "supervisor_binding",
+      "action": "relax_supervisor_binding",
+      "loss_score": "MEDIUM",
+      "reason": "Allow substitution of Prof. Karim as supervisor for one of the projects.",
+      "what_is_lost": "A different professor will chair one of the projects, impacting academic quality.",
+      "details": {
+        "professor_id": 5,
+        "professor_name": "Prof. Karim",
+        "project_id": 205,
+        "project_title": "Graph Neural Networks"
+      },
+      "patch": {
+        "op": "remove",
+        "path": "supervisor_bindings",
+        "match": {
+          "professor_id": 5,
+          "project_id": 205
+        }
+      }
+    }
+  ],
+  "recommended_option": "Option A",
+  "recommendation_rationale": "Option A allows Prof. Karim to supervise all projects on the same day with minimal disruption.",
+  "human_explanation": "Prof. Karim is currently scheduled to supervise three projects on 2026-09-04, with one in
+2026-05-06 19:19:52,583 INFO LLM adapter: OpenAIAdapter
+2026-05-06 19:19:52,584 INFO SYSTEM PROMPT (first 300 chars): REFLECTOR_V3\nYou are the Reflector — the strategic supervisor of a jury scheduling platform. You operate between the CP-SAT Solver and the human administrator. Your decisions directly determine whether a schedule is accepted, retried with adjusted parameters, or escalated for human intervention.\n\nYo
+2026-05-06 19:19:52,584 INFO USER PAYLOAD (first 1000 chars): {"request_id": "test-infeasible-retries-exhausted", "solver_result": {"status": "INFEASIBLE", "failed_constraints": [{"constraint": "supervisor_binding", "reason": "Declared supervisor is unavailable in the only valid session for this project", "details": {"project_id": 201, "project_title": "Deep Learning for Medical Imaging", "supervisor_id": 7, "supervisor_name": "Prof. Martin", "session_id": 5001, "session_date": "2026-09-02", "session_period": "morning"}}, {"constraint": "professor_unavailable", "reason": "Professor declared a personal hard unavailability for this slot", "details": {"professor_id": 7, "professor_name": "Prof. Martin", "date": "2026-09-02", "period": "morning", "unavailability_type": "personal_hard_constraint"}}], "trace": "Project 201 ('Deep Learning for Medical Imaging') requires Prof. Martin as supervisor via supervisor_binding constraint. Prof. Martin has declared personal unavailability on 2026-09-02 morning. No alternative session exists for project 201. Both
+2026-05-06 19:19:57,447 INFO RAW MODEL OUTPUT (first 2000 chars): ```json
+{
+  "status": "INFEASIBLE",
+  "summary": "The schedule is infeasible due to Prof. Martin's unavailability for the only valid session for project 201.",
+  "ranking_basis": "human_cost_hierarchy",
+  "recommended_solution_index": null,
+  "compromised_solutions": [],
+  "relaxation_suggestions": [
+    {
+      "option_label": "Option A — Cheapest",
+      "constraint": "professor_unavailable",
+      "action": "relax_unavailability",
+      "loss_score": "MEDIUM-HIGH",
+      "reason": "Allow Prof. Martin to be scheduled despite his personal hard constraint.",
+      "what_is_lost": "Overrides Prof. Martin's personal unavailability, potentially causing personal inconvenience.",
+      "details": {
+        "professor_id": 7,
+        "date": "2026-09-02",
+        "period": "morning"
+      },
+      "patch": {
+        "op": "remove",
+        "path": "unavailabilities",
+        "match": {
+          "professor_id": 7,
+          "date": "2026-09-02",
+          "period": "morning"
+        }
+      }
+    },
+    {
+      "option_label": "Option B — Alternative",
+      "constraint": "supervisor_binding",
+      "action": "relax_supervisor_binding",
+      "loss_score": "MEDIUM",
+      "reason": "Allow a different qualified professor to supervise project 201.",
+      "what_is_lost": "A different professor chairs the project, which may impact academic quality.",
+      "details": {
+        "project_id": 201,
+        "supervisor_id": 7
+      },
+      "patch": {
+        "op": "remove",
+        "path": "supervisor_bindings",
+        "match": {
+          "project_id": 201,
+          "supervisor_id": 7
+        }
+      }
+    }
+  ],
+  "recommended_option": "Option B",
+  "recommendation_rationale": "Option B preserves Prof. Martin's personal constraints while allowing project 201 to proceed with a different supervisor.",
+  "human_explanation": "Project 201 ('Deep Learning for Medical Imaging') requires Prof. Martin as the supervisor, but he is unavailable on the only session date. Option A would
+2026-05-06 19:19:59,485 INFO LLM adapter: OpenAIAdapter
+2026-05-06 19:19:59,486 INFO SYSTEM PROMPT (first 300 chars): REFLECTOR_V3\nYou are the Reflector — the strategic supervisor of a jury scheduling platform. You operate between the CP-SAT Solver and the human administrator. Your decisions directly determine whether a schedule is accepted, retried with adjusted parameters, or escalated for human intervention.\n\nYo
+2026-05-06 19:19:59,486 INFO USER PAYLOAD (first 1000 chars): {"request_id": "test-compromised-multi-solution", "solver_result": {"status": "OPTIMAL", "quality_status": "SOFT_COMPROMISED", "solutions": [{"solution_index": 1, "status": "SOFT_OPTIMAL", "raw_status": "OPTIMAL", "objective_value": 9800, "unsatisfied_soft_constraints": []}, {"solution_index": 2, "status": "SOFT_OPTIMAL", "raw_status": "OPTIMAL", "objective_value": 9800, "unsatisfied_soft_constraints": []}, {"solution_index": 3, "status": "SOFT_COMPROMISED", "raw_status": "OPTIMAL", "objective_value": 10300, "unsatisfied_soft_constraints": [{"rule": "avoid_professor_session", "payload": {"professor_id": 3, "professor_name": "Prof. Chen", "session_id": 4001}, "weight": 1.0, "penalty_weighted": 1.0}]}, {"solution_index": 4, "status": "SOFT_COMPROMISED", "raw_status": "OPTIMAL", "objective_value": 10300, "unsatisfied_soft_constraints": [{"rule": "avoid_professor_session", "payload": {"professor_id": 3, "professor_name": "Prof. Chen", "session_id": 4001}, "weight": 1.0, "penalty_weighted":
+2026-05-06 19:20:02,242 INFO RAW MODEL OUTPUT (first 2000 chars): ```json
+{
+  "status": "OPTIMAL",
+  "summary": "All solutions are optimal with no soft constraint violations.",
+  "ranking_basis": "human_cost_hierarchy",
+  "recommended_solution_index": 1,
+  "compromised_solutions": [],
+  "relaxation_suggestions": [],
+  "recommended_option": null,
+  "recommendation_rationale": null,
+  "human_explanation": null,
+  "iteration_state": {
+    "retry_count": 0,
+    "previously_relaxed": [],
+    "retries_exhausted": false
+  }
+}
+```
