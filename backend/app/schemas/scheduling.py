@@ -91,3 +91,19 @@ class AssignmentUpdate(BaseModel):
 
 class AssignmentOut(AssignmentBase, ORMBase):
     id: int
+
+
+class ProjectImportIssue(BaseModel):
+    row_number: int
+    student: str | None = None
+    reason: str
+
+
+class ProjectImportReport(BaseModel):
+    file_name: str
+    dry_run: bool
+    total_rows: int
+    inserted_count: int
+    skipped_duplicates: int
+    invalid_rows: int
+    issues: list[ProjectImportIssue]

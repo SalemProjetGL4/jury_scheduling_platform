@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app import models, schemas
+from app.services.project_import import import_projects
 from app.services.student_import import import_students
 
 
@@ -154,6 +155,33 @@ project_router = build_crud_router(
     path="/projects",
     tag="projects",
 )
+
+
+@project_router.post(
+    "/import",
+    response_model=schemas.ProjectImportReport,
+    status_code=status.HTTP_201_CREATED,
+    name="import_projects",
+)
+def import_projects_endpoint(
+    file: UploadFile = File(...),
+    default_domain_id: int | None = Form(default=None),
+    default_supervisor_id: int | None = Form(default=None),
+    dry_run: bool = Form(default=False),
+    db: Session = Depends(get_db),
+):
+    try:
+        report = import_projects(
+            db=db,
+            file_name=file.filename or "projects_upload",
+            content=file.file.read(),
+            default_domain_id=default_domain_id,
+            default_supervisor_id=default_supervisor_id,
+            dry_run=dry_run,
+        )
+        return schemas.ProjectImportReport.model_validate(report)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 slot_router = build_crud_router(
     model=models.Slot,
