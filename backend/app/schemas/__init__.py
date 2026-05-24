@@ -9,6 +9,8 @@ from app.schemas.academic import (
 from app.schemas.base import ORMBase
 from app.schemas.people import (
     ProfessorCreate,
+    ProfessorImportIssue,
+    ProfessorImportReport,
     ProfessorOut,
     ProfessorUpdate,
     StudentCreate,
@@ -63,6 +65,8 @@ __all__ = [
     "FiliereUpdate",
     "ORMBase",
     "ProfessorCreate",
+    "ProfessorImportIssue",
+    "ProfessorImportReport",
     "ProfessorOut",
     "ProfessorUpdate",
     "ProjectCreate",
