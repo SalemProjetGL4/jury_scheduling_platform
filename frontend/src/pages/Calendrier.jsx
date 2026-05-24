@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
-import { ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react'
-import { calendarEvents as mockEvents, salles as mockRooms, days as mockDays, JURY_COLORS } from '../data/mockData'
+import { ChevronLeft, ChevronRight, SlidersHorizontal, X, CalendarDays } from 'lucide-react'
+import { JURY_COLORS } from '../data/mockData'
 import { apiRequest } from '../services/api'
+import { useWorkflow } from '../context/WorkflowContext'
+import { useNavigate } from 'react-router-dom'
 
 function EventCard({ event }) {
   const c = JURY_COLORS[event.jury] || JURY_COLORS[1]
@@ -154,6 +156,45 @@ function buildCalendarData(slots, assignments, professors) {
   return { days, rooms, events }
 }
 
+function buildCalendarFromSolution(rawAssignments) {
+  const uniqueDates = [...new Set(rawAssignments.map(a => a.date).filter(Boolean))].sort()
+  const uniqueRooms = [...new Set(rawAssignments.map(a => String(a.room ?? a.session_id ?? 'A')).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+
+  const days = uniqueDates.map(date => ({
+    key: date,
+    label: formatWeekdayShort(date),
+    date: formatDateShort(date),
+  }))
+
+  const rooms = uniqueRooms.map(r => ({
+    id: r,
+    label: formatRoomLabel(r),
+    places: null,
+  }))
+
+  const events = rawAssignments.map((a, i) => {
+    if (!a.date) return null
+    const room = String(a.room ?? a.session_id ?? 'A')
+    const start = a.start_time || a.slot_start || `${String(9 + (i % 7)).padStart(2, '0')}:00`
+    const end   = a.end_time   || a.slot_end   || `${String(10 + (i % 7)).padStart(2, '0')}:00`
+    const prof  = a.examiner_name || a.president_name
+      || (a.examiner_id ? `Prof #${a.examiner_id}` : null)
+      || (a.president_id ? `Président #${a.president_id}` : null)
+      || `Projet #${a.project_id ?? i}`
+    return {
+      id: a.id ?? i,
+      salle: room,
+      day: a.date,
+      start,
+      end,
+      prof,
+      jury: ((Number(a.examiner_id || a.president_id || i) % 5) + 1),
+    }
+  }).filter(Boolean)
+
+  return { days, rooms, events }
+}
+
 function buildSessionOptions(sessions, slots, assignments) {
   const slotToSession = new Map(slots.map(slot => [slot.id, slot.session_id]))
   const counts = new Map()
@@ -173,10 +214,13 @@ function buildSessionOptions(sessions, slots, assignments) {
 }
 
 export default function Calendrier() {
+  const { selectedSolution, clearSelectedSolution } = useWorkflow()
+  const navigate = useNavigate()
+
   const [view, setView] = useState('Semaine')
-  const [rooms, setRooms] = useState(mockRooms)
-  const [events, setEvents] = useState(mockEvents)
-  const [weeks, setWeeks] = useState(buildWeeksFromDays(mockDays))
+  const [rooms, setRooms] = useState([])
+  const [events, setEvents] = useState([])
+  const [weeks, setWeeks] = useState([])
   const [weekIndex, setWeekIndex] = useState(0)
   const [sessions, setSessions] = useState([])
   const [selectedSessionId, setSelectedSessionId] = useState(null)
@@ -235,10 +279,13 @@ export default function Calendrier() {
   }, [])
 
   useEffect(() => {
+    // Don't override calendar if a specific solution is pinned
+    if (selectedSolution?.rawAssignments?.length) return
+
     if (!slots.length) {
-      setWeeks(buildWeeksFromDays(mockDays))
-      setRooms(mockRooms)
-      setEvents(mockEvents)
+      setWeeks([])
+      setRooms([])
+      setEvents([])
       setSessionOptions([])
       return
     }
@@ -254,20 +301,27 @@ export default function Calendrier() {
     const sessionAssignments = assignments.filter(item => slotIds.has(item.slot_id))
     const data = buildCalendarData(sessionSlots, sessionAssignments, professors)
 
-    setRooms(data.rooms.length ? data.rooms : mockRooms)
+    setRooms(data.rooms)
     setEvents(data.events)
 
     const nextWeeks = buildWeeksFromDays(data.days)
-    setWeeks(nextWeeks.length ? nextWeeks : buildWeeksFromDays(mockDays))
-    setWeekIndex(current => {
-      if (!nextWeeks.length) return 0
-      return Math.min(current, nextWeeks.length - 1)
-    })
-  }, [sessions, slots, assignments, professors, selectedSessionId])
+    setWeeks(nextWeeks)
+    setWeekIndex(current => Math.min(current, Math.max(0, nextWeeks.length - 1)))
+  }, [sessions, slots, assignments, professors, selectedSessionId, selectedSolution])
 
   useEffect(() => {
     setWeekIndex(0)
   }, [selectedSessionId])
+
+  // Load solution pinned from Resultats page
+  useEffect(() => {
+    if (!selectedSolution?.rawAssignments?.length) return
+    const { days, rooms: solRooms, events: solEvents } = buildCalendarFromSolution(selectedSolution.rawAssignments)
+    setRooms(solRooms)
+    setEvents(solEvents)
+    setWeeks(buildWeeksFromDays(days))
+    setWeekIndex(0)
+  }, [selectedSolution])
 
   const activeWeek = weeks[weekIndex] || weeks[0]
   const visibleDays = activeWeek?.days || []
@@ -286,6 +340,21 @@ export default function Calendrier() {
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      {/* Solution origin banner */}
+      {selectedSolution && (
+        <div className="flex items-center gap-2 px-5 py-2 bg-blue-50 border-b border-blue-100">
+          <span className="text-xs text-blue-700 font-medium">
+            Affichage de la solution {selectedSolution.label} — score {selectedSolution.score}%
+          </span>
+          <button
+            onClick={clearSelectedSolution}
+            className="ml-auto flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700"
+          >
+            <X size={12} /> Fermer
+          </button>
+        </div>
+      )}
+
       {/* Calendar toolbar */}
       <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-200 flex-wrap">
         {error && (
@@ -359,8 +428,22 @@ export default function Calendrier() {
 
       {/* Grid */}
       {visibleDays.length === 0 || rooms.length === 0 ? (
-        <div className="px-6 py-10 text-sm text-gray-400">
-          Aucune soutenance planifiee pour cette session.
+        <div className="flex flex-col items-center justify-center py-16 gap-3">
+          <CalendarDays size={40} className="text-gray-300" />
+          <p className="text-sm font-medium text-gray-500">Aucun calendrier disponible</p>
+          <p className="text-xs text-gray-400 text-center max-w-xs">
+            {selectedSolution
+              ? "La solution sélectionnée ne contient pas de données de calendrier."
+              : "Lancez une génération pour obtenir un planning, puis cliquez sur « Calendrier » depuis la page Résultats."}
+          </p>
+          {!selectedSolution && (
+            <button
+              onClick={() => navigate('/generation')}
+              className="mt-1 text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors"
+            >
+              Lancer une génération
+            </button>
+          )}
         </div>
       ) : (
         <>

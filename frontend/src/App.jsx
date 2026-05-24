@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { WorkflowProvider } from './context/WorkflowContext'
 import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
 import Donnees from './pages/Donnees'
@@ -35,6 +36,7 @@ function PageShell({ title, subtitle, children }) {
 export default function App() {
   return (
     <BrowserRouter>
+    <WorkflowProvider>
       <Sidebar />
       <Routes>
         <Route path="/" element={
@@ -78,6 +80,7 @@ export default function App() {
           </PageShell>
         } />
       </Routes>
+    </WorkflowProvider>
     </BrowserRouter>
   )
 }

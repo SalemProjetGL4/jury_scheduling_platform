@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from langgraph.graph import END, StateGraph
 
-from graph.router import route_after_orchestrator
+from graph.router import route_after_orchestrator, should_run_refine
 from graph.state import SchedulingState
 from nodes.orchestrator_node import orchestrator_node
 from nodes.reflector_node import reflector_node
 from nodes.solver_node import solver_node
+from nodes.solver_refine_node import solver_refine_node
 from nodes.translator_gateway_node import translator_gateway_node
 from nodes.translator_refine_node import translator_refine_node
 from nodes.updater_node import updater_node
@@ -20,7 +21,7 @@ def build_graph():
     builder.add_node("solver", solver_node)
     builder.add_node("reflector", reflector_node)
     builder.add_node("translator_refine", translator_refine_node)
-    builder.add_node("solver_refine", solver_node)
+    builder.add_node("solver_refine", solver_refine_node)
     builder.add_node("updater", updater_node)
 
     builder.set_entry_point("translator")
@@ -38,9 +39,13 @@ def build_graph():
         },
     )
 
-    # generate path: solver → reflector → translator_refine → solver_refine → END
+    # generate path: solver → reflector → (refine cycle only if suggestions exist) → END
     builder.add_edge("solver", "reflector")
-    builder.add_edge("reflector", "translator_refine")
+    builder.add_conditional_edges(
+        "reflector",
+        should_run_refine,
+        {"refine": "translator_refine", "skip": END},
+    )
     builder.add_edge("translator_refine", "solver_refine")
     builder.add_edge("solver_refine", END)
 

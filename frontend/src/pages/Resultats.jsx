@@ -4,23 +4,23 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from 'recharts'
-import { CalendarDays, Download, Star } from 'lucide-react'
+import { CalendarDays, Download, Star, Lightbulb, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import {
-  solutions as mockSolutions,
   repartitionParJour as mockRepartitionParJour,
   repartitionParSalle as mockRepartitionParSalle,
 } from '../data/mockData'
 import { apiRequest } from '../services/api'
+import { useWorkflow } from '../context/WorkflowContext'
+import { ArrowRight } from 'lucide-react'
+
+// ─── helpers ────────────────────────────────────────────────────────────────
 
 function Stars({ n, max = 4 }) {
   return (
     <div className="flex gap-0.5">
       {Array.from({ length: max }).map((_, i) => (
-        <Star
-          key={i}
-          size={13}
-          className={i < n ? 'text-amber-400 fill-amber-400' : 'text-gray-200 fill-gray-200'}
-        />
+        <Star key={i} size={13}
+          className={i < n ? 'text-amber-400 fill-amber-400' : 'text-gray-200 fill-gray-200'} />
       ))}
     </div>
   )
@@ -28,225 +28,255 @@ function Stars({ n, max = 4 }) {
 
 const ROOM_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#14B8A6']
 
-function formatDateLabel(value) {
-  if (!value) return ''
-  const date = new Date(`${value}T00:00:00`)
-  return date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
-}
-
-function formatDateShort(value) {
-  if (!value) return ''
-  const date = new Date(`${value}T00:00:00`)
-  return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })
+function fmt(v) {
+  if (!v) return ''
+  const d = new Date(`${v}T00:00:00`)
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })
 }
 
 function countConflicts(assignments) {
   const bySlot = new Map()
-  assignments.forEach(assignment => {
-    const list = bySlot.get(assignment.slot_id) || []
-    list.push(assignment)
-    bySlot.set(assignment.slot_id, list)
+  assignments.forEach(a => {
+    const list = bySlot.get(a.slot_id) || []; list.push(a); bySlot.set(a.slot_id, list)
   })
-
-  let conflicts = 0
+  let n = 0
   bySlot.forEach(list => {
     const seen = new Map()
-    list.forEach(assignment => {
-      ;[assignment.examiner_id, assignment.president_id].forEach(id => {
+    list.forEach(a => {
+      ;[a.examiner_id, a.president_id].forEach(id => {
         if (!id) return
-        const count = (seen.get(id) || 0) + 1
-        if (count > 1) {
-          conflicts += 1
-        }
-        seen.set(id, count)
+        const c = (seen.get(id) || 0) + 1
+        if (c > 1) n++
+        seen.set(id, c)
       })
     })
   })
-
-  return conflicts
+  return n
 }
 
-function buildSolutions(sessions, slots, assignments) {
+function buildSolutionsFromDB(sessions, slots, assignments) {
   const slotsBySession = new Map()
-  slots.forEach(slot => {
-    const list = slotsBySession.get(slot.session_id) || []
-    list.push(slot)
-    slotsBySession.set(slot.session_id, list)
-  })
-
-  const assignmentsBySlot = new Map()
-  assignments.forEach(assignment => {
-    const list = assignmentsBySlot.get(assignment.slot_id) || []
-    list.push(assignment)
-    assignmentsBySlot.set(assignment.slot_id, list)
-  })
+  slots.forEach(s => { const l = slotsBySession.get(s.session_id) || []; l.push(s); slotsBySession.set(s.session_id, l) })
+  const aBySlot = new Map()
+  assignments.forEach(a => { const l = aBySlot.get(a.slot_id) || []; l.push(a); aBySlot.set(a.slot_id, l) })
 
   const derived = sessions.map(session => {
-    const sessionSlots = slotsBySession.get(session.id) || []
-    const sessionAssignments = sessionSlots.flatMap(slot => assignmentsBySlot.get(slot.id) || [])
-    const uniqueDates = new Set(sessionSlots.map(slot => slot.date))
-    const uniqueRooms = new Set(sessionSlots.map(slot => slot.room))
-    const conflicts = countConflicts(sessionAssignments)
-    const score = sessionAssignments.length ? Math.max(0, 100 - conflicts * 5) : 0
-    const stars = Math.min(4, Math.max(0, Math.round(score / 25)))
-
+    const ss = slotsBySession.get(session.id) || []
+    const aa = ss.flatMap(s => aBySlot.get(s.id) || [])
+    const conflicts = countConflicts(aa)
+    const score = aa.length ? Math.max(0, 100 - conflicts * 5) : 0
     return {
-      id: session.id,
-      label: `#${session.id}`,
-      score,
-      stars,
-      conflits: conflicts,
-      jours: uniqueDates.size,
-      salles: uniqueRooms.size,
-      soutenances: sessionAssignments.length,
-      recommended: false,
-      date: formatDateLabel(session.start_date),
+      id: session.id, label: `#${session.id}`, score, stars: Math.min(4, Math.round(score / 25)),
+      conflits: conflicts, jours: new Set(ss.map(s => s.date)).size,
+      salles: new Set(ss.map(s => s.room)).size, soutenances: aa.length,
+      recommended: false, date: session.start_date,
     }
   })
-
-  if (derived.length > 0) {
-    const best = derived.reduce((max, item) => item.score > max.score ? item : max, derived[0])
-    derived.forEach(item => {
-      item.recommended = item.id === best.id
-    })
+  if (derived.length) {
+    const best = derived.reduce((a, b) => b.score > a.score ? b : a)
+    derived.forEach(d => { d.recommended = d.id === best.id })
   }
-
   return derived
 }
 
-function buildCharts(sessionId, slots, assignments) {
-  const slotsById = new Map()
-  slots.forEach(slot => slotsById.set(slot.id, slot))
-  const sessionSlots = slots.filter(slot => slot.session_id === sessionId)
-  const slotIds = new Set(sessionSlots.map(slot => slot.id))
-  const sessionAssignments = assignments.filter(item => slotIds.has(item.slot_id))
-
-  const byDate = new Map()
-  const byRoom = new Map()
-
-  sessionAssignments.forEach(item => {
-    const slot = slotsById.get(item.slot_id)
-    if (!slot) return
-    byDate.set(slot.date, (byDate.get(slot.date) || 0) + 1)
-    byRoom.set(slot.room, (byRoom.get(slot.room) || 0) + 1)
+function buildChartsFromDB(sessionId, slots, assignments) {
+  const slotsById = new Map(slots.map(s => [s.id, s]))
+  const ss = slots.filter(s => s.session_id === sessionId)
+  const ids = new Set(ss.map(s => s.id))
+  const aa = assignments.filter(a => ids.has(a.slot_id))
+  const byDate = new Map(), byRoom = new Map()
+  aa.forEach(a => {
+    const s = slotsById.get(a.slot_id); if (!s) return
+    byDate.set(s.date, (byDate.get(s.date) || 0) + 1)
+    byRoom.set(s.room, (byRoom.get(s.room) || 0) + 1)
   })
-
-  const repartitionParJour = Array.from(byDate.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([date, value]) => ({ jour: formatDateShort(date), value }))
-
-  const repartitionParSalle = Array.from(byRoom.entries()).map(([room, value], index) => ({
-    name: `Salle ${room}`,
-    value,
-    color: ROOM_COLORS[index % ROOM_COLORS.length],
-  }))
-
-  return { repartitionParJour, repartitionParSalle }
+  return {
+    repartitionParJour: Array.from(byDate.entries()).sort().map(([d, v]) => ({ jour: fmt(d), value: v })),
+    repartitionParSalle: Array.from(byRoom.entries()).map(([r, v], i) => ({ name: `Salle ${r}`, value: v, color: ROOM_COLORS[i % ROOM_COLORS.length] })),
+  }
 }
+
+// Parse orchestrator solver_result into display rows
+function buildSolutionsFromWorkflow(solverResult) {
+  if (!solverResult) { console.warn('[buildSolutionsFromWorkflow] solverResult is null'); return [] }
+  const { status, solutions, assignments } = solverResult
+  console.log('[buildSolutionsFromWorkflow] status:', status, '| solutions:', solutions?.length, '| assignments:', assignments?.length)
+  const source = solutions?.length ? solutions : (assignments?.length ? [{ assignments }] : [])
+  if (!source.length) console.warn('[buildSolutionsFromWorkflow] source is empty — no solutions or assignments found in', solverResult)
+  return source.map((sol, i) => {
+    const aa = sol.assignments || []
+    const conflicts = aa.filter(a => a.is_conflict).length
+    const score = Math.max(0, 100 - conflicts * 5 - (sol.total_penalty || 0) / 10)
+    return {
+      id: i + 1, label: `#${i + 1}`, score: Math.round(score),
+      stars: Math.min(4, Math.round(score / 25)),
+      conflits: conflicts, jours: new Set(aa.map(a => a.date)).size,
+      salles: new Set(aa.map(a => a.session_id)).size,
+      soutenances: aa.length,
+      recommended: i === (solverResult.recommended_index || 0),
+      date: null, rawAssignments: aa, status,
+    }
+  })
+}
+
+function buildChartsFromWorkflow(sol) {
+  if (!sol?.rawAssignments?.length) return { repartitionParJour: [], repartitionParSalle: [] }
+  const byDate = new Map(), bySalle = new Map()
+  sol.rawAssignments.forEach(a => {
+    if (a.date) byDate.set(a.date, (byDate.get(a.date) || 0) + 1)
+    const room = a.session_id || a.room || 'Salle'
+    bySalle.set(room, (bySalle.get(room) || 0) + 1)
+  })
+  return {
+    repartitionParJour: Array.from(byDate.entries()).sort().map(([d, v]) => ({ jour: fmt(d), value: v })),
+    repartitionParSalle: Array.from(bySalle.entries()).map(([r, v], i) => ({ name: `${r}`, value: v, color: ROOM_COLORS[i % ROOM_COLORS.length] })),
+  }
+}
+
+// ─── Reflector suggestions panel ────────────────────────────────────────────
+
+function ReflectorPanel({ reflectorResult }) {
+  if (!reflectorResult) return null
+  const { status, summary, relaxation_suggestions = [], compromised_solutions = [] } = reflectorResult
+
+  // LLM failure — show a dismissible soft warning, not a full error panel
+  const isLlmError = status === 'INFEASIBLE' && summary?.startsWith('LLM error')
+  if (isLlmError) return (
+    <div className="flex items-start gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700">
+      <AlertTriangle size={13} className="mt-0.5 flex-shrink-0" />
+      <span>L'analyse du réflecteur est indisponible (erreur LLM). Les solutions du solveur restent valides.</span>
+    </div>
+  )
+
+  const statusColor = {
+    OPTIMAL:     'bg-green-50  text-green-700  border-green-200',
+    FEASIBLE:    'bg-blue-50   text-blue-700   border-blue-200',
+    COMPROMISED: 'bg-amber-50  text-amber-700  border-amber-200',
+    INFEASIBLE:  'bg-red-50    text-red-700    border-red-200',
+  }[status] || 'bg-gray-50 text-gray-700 border-gray-200'
+
+  const StatusIcon = status === 'OPTIMAL' || status === 'FEASIBLE' ? CheckCircle2 : AlertTriangle
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className={`flex items-center gap-2 px-5 py-3 border-b ${statusColor}`}>
+        <StatusIcon size={16} />
+        <p className="text-sm font-semibold">Analyse du réflecteur — {status}</p>
+      </div>
+
+      {summary && (
+        <p className="px-5 py-3 text-sm text-gray-600 border-b border-gray-100">{summary}</p>
+      )}
+
+      {relaxation_suggestions.length > 0 && (
+        <div className="px-5 py-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Lightbulb size={14} className="text-amber-500" />
+            <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+              Suggestions de relaxation
+            </p>
+          </div>
+          <ul className="space-y-2.5">
+            {relaxation_suggestions.map((s, i) => (
+              <li key={i} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
+                <p className="text-xs font-semibold text-gray-800">{s.constraint}</p>
+                <p className="text-xs text-blue-600 mt-0.5">→ {s.action}</p>
+                <p className="text-xs text-gray-500 mt-0.5">{s.reason}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {compromised_solutions.length > 0 && (
+        <div className="px-5 pb-4">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Violations détectées</p>
+          {compromised_solutions.map((c, i) => (
+            <div key={i} className="text-xs text-gray-600 border-l-2 border-amber-300 pl-2 mb-1.5">
+              <span className="font-medium">Solution {i + 1}</span> — score {c.rating}/100, {c.violations_count} violation(s)
+              {c.explanation && <span className="text-gray-400"> · {c.explanation}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Solution detail panel ───────────────────────────────────────────────────
 
 const DETAIL_TABS = ['Aperçu', 'Calendrier', 'Détails', 'Conflits']
 
-function SolutionDetail({ sol, repartitionParJour, repartitionParSalle }) {
+function SolutionDetail({ sol, repartitionParJour, repartitionParSalle, onViewCalendar }) {
   const [tab, setTab] = useState('Aperçu')
   const navigate = useNavigate()
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 flex flex-col h-full">
-      {/* Header */}
+    <div className="bg-white rounded-xl border border-gray-200 flex flex-col">
       <div className="px-5 py-4 border-b border-gray-200">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-gray-900">Solution {sol.label}</h3>
           <span className="text-sm font-bold text-green-600">Score : {sol.score}%</span>
         </div>
-        <div className="flex gap-1 mt-3">
+        <div className="flex gap-1 mt-3 flex-wrap">
           {DETAIL_TABS.map(t => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`text-xs px-3 py-1.5 rounded-md font-medium transition-colors ${
-                tab === t ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'
-              }`}
-            >
+            <button key={t} onClick={() => setTab(t)}
+              className={`text-xs px-3 py-1.5 rounded-md font-medium transition-colors ${tab === t ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
               {t}
             </button>
           ))}
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-        {/* Quick stats */}
-        <div className="grid grid-cols-4 gap-3">
+      <div className="px-5 py-4 space-y-5">
+        <div className="grid grid-cols-4 gap-2">
           {[
-            { icon: '📋', val: sol.soutenances, lbl: 'Soutenances' },
-            { icon: '📅', val: sol.jours,       lbl: 'Jours planifiés' },
-            { icon: '🏫', val: sol.salles,      lbl: 'Salles utilisées' },
-            { icon: 'ℹ️', val: sol.conflits,    lbl: 'Conflit détecté' },
-          ].map(({ icon, val, lbl }) => (
-            <div key={lbl} className="bg-gray-50 rounded-lg px-3 py-3 text-center">
-              <p className="text-lg font-bold text-gray-900">{val}</p>
-              <p className="text-[10px] text-gray-500 whitespace-pre-line leading-tight mt-0.5">{lbl}</p>
+            { val: sol.soutenances, lbl: 'Soutenances'     },
+            { val: sol.jours,       lbl: 'Jours'           },
+            { val: sol.salles,      lbl: 'Salles'          },
+            { val: sol.conflits,    lbl: 'Conflits'        },
+          ].map(({ val, lbl }) => (
+            <div key={lbl} className="bg-gray-50 rounded-lg px-2 py-2.5 text-center">
+              <p className="text-base font-bold text-gray-900">{val}</p>
+              <p className="text-[10px] text-gray-500">{lbl}</p>
             </div>
           ))}
         </div>
 
-        {/* Charts row */}
         <div className="grid grid-cols-2 gap-4">
-          {/* Bar chart */}
           <div>
             <p className="text-xs font-semibold text-gray-600 mb-2">Répartition par jour</p>
-            <ResponsiveContainer width="100%" height={110}>
-              <BarChart data={repartitionParJour} barSize={16}>
-                <XAxis dataKey="jour" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+            <ResponsiveContainer width="100%" height={100}>
+              <BarChart data={repartitionParJour} barSize={14}>
+                <XAxis dataKey="jour" tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
                 <YAxis hide />
                 <Tooltip contentStyle={{ fontSize: 11 }} />
                 <Bar dataKey="value" fill="#3B82F6" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
-
-          {/* Donut chart */}
           <div>
             <p className="text-xs font-semibold text-gray-600 mb-2">Répartition par salle</p>
-            <ResponsiveContainer width="100%" height={110}>
+            <ResponsiveContainer width="100%" height={100}>
               <PieChart>
-                <Pie
-                  data={repartitionParSalle}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={28}
-                  outerRadius={45}
-                  dataKey="value"
-                  paddingAngle={2}
-                >
-                  {repartitionParSalle.map((entry) => (
-                    <Cell key={entry.name} fill={entry.color} />
-                  ))}
+                <Pie data={repartitionParSalle} cx="50%" cy="50%" innerRadius={24} outerRadius={38} dataKey="value" paddingAngle={2}>
+                  {repartitionParSalle.map(e => <Cell key={e.name} fill={e.color} />)}
                 </Pie>
-                <Legend
-                  iconType="circle"
-                  iconSize={8}
-                  formatter={(v, e) => `${v} (${e.payload.value})`}
-                  wrapperStyle={{ fontSize: 10 }}
-                />
+                <Legend iconType="circle" iconSize={7} formatter={(v, e) => `${v} (${e.payload.value})`} wrapperStyle={{ fontSize: 9 }} />
               </PieChart>
             </ResponsiveContainer>
           </div>
         </div>
       </div>
 
-      {/* Actions */}
       <div className="px-5 py-4 border-t border-gray-100 space-y-2">
         <div className="flex gap-2">
-          <button
-            onClick={() => navigate('/calendrier')}
-            className="flex-1 flex items-center justify-center gap-1.5 text-xs border border-gray-300 rounded-lg py-2 hover:bg-gray-50 font-medium"
-          >
-            <CalendarDays size={13} /> Voir le calendrier
+          <button onClick={onViewCalendar}
+            className="flex-1 flex items-center justify-center gap-1.5 text-xs border border-gray-300 rounded-lg py-2 hover:bg-gray-50 font-medium">
+            <CalendarDays size={13} /> Calendrier
           </button>
-          <button
-            onClick={() => navigate('/exports')}
-            className="flex-1 flex items-center justify-center gap-1.5 text-xs border border-gray-300 rounded-lg py-2 hover:bg-gray-50 font-medium"
-          >
+          <button onClick={() => navigate('/exports')}
+            className="flex-1 flex items-center justify-center gap-1.5 text-xs border border-gray-300 rounded-lg py-2 hover:bg-gray-50 font-medium">
             <Download size={13} /> Exporter
           </button>
         </div>
@@ -258,155 +288,345 @@ function SolutionDetail({ sol, repartitionParJour, repartitionParSalle }) {
   )
 }
 
-export default function Resultats() {
-  const [activeTab, setActiveTab] = useState('Solutions générées')
-  const [solutions, setSolutions] = useState(mockSolutions)
-  const [selected, setSelected] = useState(mockSolutions[0])
-  const [slots, setSlots] = useState([])
-  const [assignments, setAssignments] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [usingMock, setUsingMock] = useState(true)
+// ─── Debug panel (inline) ────────────────────────────────────────────────────
 
+function DebugPanel({ workflowResult }) {
+  const [open, setOpen] = useState(false)
+  if (!workflowResult) return null
+  return (
+    <div className="mt-4 border border-gray-200 rounded-xl overflow-hidden text-[11px] font-mono">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-500 text-left"
+      >
+        <span>Debug — données du workflow</span>
+        <span>{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="p-4 space-y-2 bg-white overflow-auto max-h-80">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+            <span className="text-gray-400">final_status</span>
+            <span className="font-semibold">{workflowResult.final_status ?? '—'}</span>
+            <span className="text-gray-400">solver_result.status</span>
+            <span className={workflowResult.solver_result?.status === 'OPTIMAL' ? 'text-green-600 font-semibold' : 'text-red-500 font-semibold'}>
+              {workflowResult.solver_result?.status ?? 'null'}
+            </span>
+            <span className="text-gray-400">solutions count</span>
+            <span>{workflowResult.solver_result?.solutions?.length ?? 'undefined'}</span>
+            <span className="text-gray-400">assignments count</span>
+            <span>{workflowResult.solver_result?.assignments?.length ?? 'undefined'}</span>
+            <span className="text-gray-400">reflector_result.status</span>
+            <span>{workflowResult.reflector_result?.status ?? 'null'}</span>
+            <span className="text-gray-400">errors</span>
+            <span className="text-red-500">{(workflowResult.errors || []).join(' · ') || '—'}</span>
+          </div>
+          <details className="mt-2">
+            <summary className="cursor-pointer text-gray-400 hover:text-gray-700">solver_result JSON</summary>
+            <pre className="mt-1 text-[10px] text-gray-600 whitespace-pre-wrap break-all bg-gray-50 p-2 rounded">
+              {JSON.stringify(workflowResult.solver_result, null, 2)}
+            </pre>
+          </details>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Main page ───────────────────────────────────────────────────────────────
+
+export default function Resultats() {
+  const navigate = useNavigate()
+  const { result: workflowResult, saveSelectedSolution } = useWorkflow()
+
+  const [activeTab, setActiveTab]         = useState('Solutions générées')
+  const [dbSolutions, setDbSolutions]     = useState([])
+  const [slots, setSlots]                 = useState([])
+  const [assignments, setAssignments]     = useState([])
+  const [loadingDb, setLoadingDb]         = useState(true)
+  const [dbError, setDbError]             = useState('')
+  const [usingMock, setUsingMock]         = useState(false)
+
+  // ── load from DB as fallback ──
   useEffect(() => {
     let active = true
-
-    async function loadSolutions() {
+    async function load() {
       try {
-        const [sessionsData, slotsData, assignmentsData] = await Promise.all([
+        const [sess, sl, ass] = await Promise.all([
           apiRequest('/sessions?limit=200'),
           apiRequest('/slots?limit=200'),
           apiRequest('/assignments?limit=200'),
         ])
-
         if (!active) return
-
-        const safeSessions = Array.isArray(sessionsData) ? sessionsData : []
-        const safeSlots = Array.isArray(slotsData) ? slotsData : []
-        const safeAssignments = Array.isArray(assignmentsData) ? assignmentsData : []
-
-        if (safeSessions.length > 0) {
-          const derived = buildSolutions(safeSessions, safeSlots, safeAssignments)
-          if (derived.length > 0) {
-            setSolutions(derived)
-            setSelected(derived[0])
-            setUsingMock(false)
-          }
-          setSlots(safeSlots)
-          setAssignments(safeAssignments)
+        const sessions = Array.isArray(sess) ? sess : []
+        const safeSlots = Array.isArray(sl) ? sl : []
+        const safeAss = Array.isArray(ass) ? ass : []
+        if (sessions.length) {
+          const derived = buildSolutionsFromDB(sessions, safeSlots, safeAss)
+          if (derived.length) { setDbSolutions(derived); setUsingMock(false) }
+          setSlots(safeSlots); setAssignments(safeAss)
         }
-
-        setError('')
-      } catch (err) {
-        if (active) {
-          setError(err.message || 'Impossible de charger les solutions')
-        }
+        setDbError('')
+      } catch (e) {
+        if (active) setDbError(e.message)
       } finally {
-        if (active) {
-          setLoading(false)
-        }
+        if (active) setLoadingDb(false)
       }
     }
-
-    loadSolutions()
-
-    return () => {
-      active = false
-    }
+    load()
+    return () => { active = false }
   }, [])
 
-  const charts = useMemo(() => {
-    if (!selected) {
-      return { repartitionParJour: [], repartitionParSalle: [] }
-    }
-    if (usingMock) {
-      return {
-        repartitionParJour: mockRepartitionParJour,
-        repartitionParSalle: mockRepartitionParSalle,
-      }
-    }
+  // Prefer orchestrator result if present
+  const wfSolverResult    = workflowResult?.solver_result
+  const wfReflectorResult = workflowResult?.reflector_result
+  const hasWorkflow       = Boolean(wfSolverResult)
 
-    const computed = buildCharts(selected.id, slots, assignments)
-    if (computed.repartitionParJour.length === 0 || computed.repartitionParSalle.length === 0) {
-      return {
-        repartitionParJour: mockRepartitionParJour,
-        repartitionParSalle: mockRepartitionParSalle,
-      }
+  const solutions = useMemo(() => {
+    if (hasWorkflow) return buildSolutionsFromWorkflow(wfSolverResult)
+    return dbSolutions
+  }, [hasWorkflow, wfSolverResult, dbSolutions])
+
+  const [selected, setSelected] = useState(null)
+  const effectiveSelected = selected ?? solutions[0] ?? null
+
+  const charts = useMemo(() => {
+    if (!effectiveSelected) return { repartitionParJour: mockRepartitionParJour, repartitionParSalle: mockRepartitionParSalle }
+    if (hasWorkflow) {
+      const c = buildChartsFromWorkflow(effectiveSelected)
+      return c.repartitionParJour.length ? c : { repartitionParJour: mockRepartitionParJour, repartitionParSalle: mockRepartitionParSalle }
     }
-    return computed
-  }, [selected, slots, assignments, usingMock])
+    if (!usingMock && slots.length) {
+      const c = buildChartsFromDB(effectiveSelected.id, slots, assignments)
+      return c.repartitionParJour.length ? c : { repartitionParJour: mockRepartitionParJour, repartitionParSalle: mockRepartitionParSalle }
+    }
+    return { repartitionParJour: mockRepartitionParJour, repartitionParSalle: mockRepartitionParSalle }
+  }, [effectiveSelected, hasWorkflow, usingMock, slots, assignments])
+
+  const loading = !hasWorkflow && loadingDb
 
   return (
+    <div className="space-y-4">
     <div className="flex gap-5 items-start">
-      {/* Left — solutions table */}
+      {/* Left — table */}
       <div className="flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden">
-        {/* Tabs */}
         <div className="flex border-b border-gray-200 px-5">
           {['Solutions générées', 'Propositions'].map(t => (
-            <button
-              key={t}
-              onClick={() => setActiveTab(t)}
-              className={`text-sm font-medium py-3 px-2 mr-4 border-b-2 transition-colors ${
-                activeTab === t
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-            >
+            <button key={t} onClick={() => setActiveTab(t)}
+              className={`text-sm font-medium py-3 px-2 mr-4 border-b-2 transition-colors ${activeTab === t ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
               {t}
             </button>
           ))}
         </div>
 
-        {/* Table */}
-        <table className="w-full text-sm">
+        {/* Workflow origin badge */}
+        {hasWorkflow && (
+          <div className="px-5 py-2 bg-blue-50 border-b border-blue-100 flex items-center gap-2">
+            <CheckCircle2 size={13} className="text-blue-500" />
+            <span className="text-xs text-blue-700">
+              Résultat de la dernière génération — statut : <strong>{wfSolverResult?.status || '—'}</strong>
+            </span>
+            <button onClick={() => navigate('/generation')} className="ml-auto text-xs text-blue-600 hover:underline">
+              Nouvelle génération
+            </button>
+          </div>
+        )}
+
+        {/* Propositions tab — show reflector suggestions */}
+        {activeTab === 'Propositions' && (
+          <div className="px-5 py-5">
+            {!wfReflectorResult ? (
+              <div className="text-sm text-gray-400 py-4">
+                Aucune suggestion disponible. Lancez une génération pour obtenir l'analyse du réflecteur.
+              </div>
+            ) : (
+              <div className="space-y-4 max-w-2xl">
+                {/* Status header */}
+                {(() => {
+                  const { status, summary, relaxation_suggestions = [], compromised_solutions = [] } = wfReflectorResult
+                  const statusColor = {
+                    OPTIMAL:     'bg-green-50  text-green-700  border-green-200',
+                    FEASIBLE:    'bg-blue-50   text-blue-700   border-blue-200',
+                    COMPROMISED: 'bg-amber-50  text-amber-700  border-amber-200',
+                    INFEASIBLE:  'bg-red-50    text-red-700    border-red-200',
+                  }[status] || 'bg-gray-50 text-gray-700 border-gray-200'
+                  const Icon = status === 'OPTIMAL' || status === 'FEASIBLE' ? CheckCircle2 : AlertTriangle
+                  return (
+                    <>
+                      <div className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-semibold ${statusColor}`}>
+                        <Icon size={15} />
+                        Analyse du réflecteur — {status}
+                      </div>
+                      {summary && <p className="text-sm text-gray-600">{summary}</p>}
+                      {relaxation_suggestions.length > 0 && (
+                        <div>
+                          <div className="flex items-center gap-2 mb-3">
+                            <Lightbulb size={14} className="text-amber-500" />
+                            <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                              Suggestions de relaxation ({relaxation_suggestions.length})
+                            </p>
+                          </div>
+                          <ul className="space-y-2.5">
+                            {relaxation_suggestions.map((s, i) => (
+                              <li key={i} className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                                <div className="flex items-start gap-2">
+                                  <ArrowRight size={13} className="text-blue-400 mt-0.5 flex-shrink-0" />
+                                  <div>
+                                    <p className="text-xs font-semibold text-gray-800">{s.constraint}</p>
+                                    <p className="text-xs text-blue-600 mt-0.5">{s.action}</p>
+                                    <p className="text-xs text-gray-500 mt-0.5">{s.reason}</p>
+                                  </div>
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {compromised_solutions.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Violations détectées</p>
+                          {compromised_solutions.map((c, i) => (
+                            <div key={i} className="text-xs text-gray-600 border-l-2 border-amber-300 pl-3 mb-2">
+                              <span className="font-medium">Solution {i + 1}</span> — score {c.rating}/100, {c.violations_count} violation(s)
+                              {c.explanation && <span className="text-gray-400"> · {c.explanation}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {relaxation_suggestions.length === 0 && compromised_solutions.length === 0 && (
+                        <p className="text-sm text-green-600">Aucune suggestion — la solution est optimale.</p>
+                      )}
+                    </>
+                  )
+                })()}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'Solutions générées' && <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50">
               {['Solution', 'Score', 'Conflits', 'Jours', 'Salles', 'Soutenances', 'Actions'].map(h => (
-                <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500">{h}</th>
+                <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {loading && (
-              <tr>
-                <td className="px-4 py-4 text-gray-400" colSpan={7}>Chargement…</td>
-              </tr>
-            )}
-            {!loading && solutions.length === 0 && (
-              <tr>
-                <td className="px-4 py-4 text-gray-400" colSpan={7}>Aucune solution disponible.</td>
-              </tr>
-            )}
+            {loading && <tr><td className="px-4 py-10 text-center text-gray-400" colSpan={7}>Chargement…</td></tr>}
+            {!loading && solutions.length === 0 && (() => {
+              const solverStatus = wfSolverResult?.status
+              const finalStatus  = workflowResult?.final_status
+              const failedConstraints = wfSolverResult?.failed_constraints || []
+              const wfErrors = workflowResult?.errors || []
+
+              if (solverStatus === 'INFEASIBLE') return (
+                <tr>
+                  <td colSpan={7}>
+                    <div className="px-6 py-8 space-y-3">
+                      <div className="flex items-center gap-2 text-red-600">
+                        <AlertTriangle size={18} />
+                        <p className="text-sm font-semibold">Aucune solution trouvée — contraintes incompatibles</p>
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        Le solveur n'a pas pu satisfaire toutes les contraintes obligatoires.
+                        Vérifiez les données ou assouplissez les contraintes.
+                      </p>
+                      {failedConstraints.length > 0 && (
+                        <ul className="space-y-1 mt-2">
+                          {failedConstraints.slice(0, 6).map((fc, i) => (
+                            <li key={i} className="text-xs text-red-700 bg-red-50 border border-red-100 rounded px-3 py-1.5">
+                              <span className="font-medium">{fc.constraint || fc.rule || 'Contrainte'}</span>
+                              {fc.reason && <span className="text-red-500"> — {fc.reason}</span>}
+                            </li>
+                          ))}
+                          {failedConstraints.length > 6 && (
+                            <li className="text-xs text-gray-400 pl-1">+ {failedConstraints.length - 6} autre(s)…</li>
+                          )}
+                        </ul>
+                      )}
+                      <button onClick={() => navigate('/generation')}
+                        className="mt-1 text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
+                        Modifier les contraintes et relancer
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )
+
+              if (finalStatus === 'error' || wfErrors.length > 0) return (
+                <tr>
+                  <td colSpan={7}>
+                    <div className="px-6 py-8 space-y-3">
+                      <div className="flex items-center gap-2 text-orange-600">
+                        <AlertTriangle size={18} />
+                        <p className="text-sm font-semibold">Erreur du pipeline</p>
+                      </div>
+                      {wfErrors.length > 0 && (
+                        <ul className="space-y-1">
+                          {wfErrors.map((e, i) => (
+                            <li key={i} className="text-xs text-orange-700 bg-orange-50 border border-orange-100 rounded px-3 py-1.5">{e}</li>
+                          ))}
+                        </ul>
+                      )}
+                      <button onClick={() => navigate('/generation')}
+                        className="mt-1 text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
+                        Relancer la génération
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )
+
+              return (
+                <tr>
+                  <td colSpan={7}>
+                    <div className="flex flex-col items-center justify-center py-12 gap-3">
+                      <CalendarDays size={36} className="text-gray-300" />
+                      <p className="text-sm font-medium text-gray-500">Aucun résultat disponible</p>
+                      <p className="text-xs text-gray-400 text-center max-w-xs">
+                        Lancez une génération pour obtenir des solutions de planification optimisées.
+                      </p>
+                      <button onClick={() => navigate('/generation')}
+                        className="mt-1 text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
+                        Lancer une génération
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )
+            })()}
             {!loading && solutions.map(sol => (
-              <tr
-                key={sol.id}
-                className={`border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${selected?.id === sol.id ? 'bg-blue-50' : ''}`}
-                onClick={() => setSelected(sol)}
-              >
-                <td className="px-4 py-3 font-medium text-gray-900">
-                  #{sol.id}
-                  {sol.recommended && (
-                    <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">recommandée</span>
-                  )}
+              <tr key={sol.id} onClick={() => setSelected(sol)}
+                className={`border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${effectiveSelected?.id === sol.id ? 'bg-blue-50' : ''}`}>
+                <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">
+                  {sol.label}
+                  {sol.recommended && <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">recommandée</span>}
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3 whitespace-nowrap">
                   <div className="flex items-center gap-1.5">
                     <span className="font-semibold text-green-600">{sol.score}%</span>
                     <Stars n={sol.stars} />
                   </div>
                 </td>
-                <td className="px-4 py-3 text-gray-600">{sol.conflits}</td>
-                <td className="px-4 py-3 text-gray-600">{sol.jours}</td>
-                <td className="px-4 py-3 text-gray-600">{sol.salles}</td>
-                <td className="px-4 py-3 text-gray-600">{sol.soutenances}</td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.conflits}</td>
+                <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.jours}</td>
+                <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.salles}</td>
+                <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.soutenances}</td>
+                <td className="px-4 py-3 whitespace-nowrap">
                   <div className="flex gap-1.5">
-                    <button className="text-xs text-blue-600 font-medium hover:underline">Voir</button>
-                    <button className="text-xs border border-gray-300 rounded px-2 py-0.5 hover:bg-gray-50">Calendrier</button>
                     <button
-                      className="text-xs bg-blue-600 text-white rounded px-2 py-0.5 hover:bg-blue-700"
                       onClick={e => { e.stopPropagation(); setSelected(sol) }}
-                    >
+                      className="text-xs text-blue-600 font-medium hover:underline">
+                      Voir
+                    </button>
+                    <button
+                      onClick={e => { e.stopPropagation(); saveSelectedSolution(sol); navigate('/calendrier') }}
+                      className="text-xs border border-gray-300 rounded px-2 py-0.5 hover:bg-gray-50">
+                      Calendrier
+                    </button>
+                    <button onClick={e => { e.stopPropagation(); setSelected(sol) }}
+                      className="text-xs bg-blue-600 text-white rounded px-2 py-0.5 hover:bg-blue-700">
                       Sélectionner
                     </button>
                   </div>
@@ -415,36 +635,39 @@ export default function Resultats() {
             ))}
           </tbody>
         </table>
+        </div>}
 
-        <div className="px-5 py-3 flex items-center justify-between">
-          <button className="text-xs text-gray-600 border border-gray-300 rounded-lg px-3 py-1.5 hover:bg-gray-50">
-            Comparer les solutions
-          </button>
-          <button className="text-xs text-gray-400 border border-gray-200 rounded-lg px-3 py-1.5" disabled>
-            Solution sélectionnée
-          </button>
-        </div>
-      </div>
-
-      {/* Right — detail panel */}
-      <div className="w-80 flex-shrink-0">
-        {error && (
-          <div className="mb-3 text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-            {error}
+        {activeTab === 'Solutions générées' && dbError && (
+          <div className="px-5 py-2 text-xs text-amber-600 bg-amber-50 border-t border-amber-100">
+            {dbError} — affichage des données de démonstration.
           </div>
         )}
-        {selected ? (
-          <SolutionDetail
-            sol={selected}
-            repartitionParJour={charts.repartitionParJour}
-            repartitionParSalle={charts.repartitionParSalle}
-          />
-        ) : (
-          <div className="bg-white rounded-xl border border-gray-200 p-4 text-sm text-gray-400">
-            Aucune solution selectionnee.
+
+        {activeTab === 'Solutions générées' && (
+          <div className="px-5 py-3 flex gap-2">
+            <button className="text-xs text-gray-600 border border-gray-300 rounded-lg px-3 py-1.5 hover:bg-gray-50">
+              Comparer les solutions
+            </button>
           </div>
         )}
       </div>
+
+      {/* Right — detail + reflector */}
+      <div className="w-80 flex-shrink-0 space-y-4">
+        {effectiveSelected
+          ? <SolutionDetail
+              sol={effectiveSelected}
+              repartitionParJour={charts.repartitionParJour}
+              repartitionParSalle={charts.repartitionParSalle}
+              onViewCalendar={() => { saveSelectedSolution(effectiveSelected); navigate('/calendrier') }}
+            />
+          : <div className="bg-white rounded-xl border border-gray-200 p-4 text-sm text-gray-400">Aucune solution sélectionnée.</div>
+        }
+        <ReflectorPanel reflectorResult={wfReflectorResult} />
+      </div>
+    </div>
+
+    <DebugPanel workflowResult={workflowResult} />
     </div>
   )
 }
