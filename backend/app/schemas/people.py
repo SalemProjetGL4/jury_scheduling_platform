@@ -65,3 +65,20 @@ class StudentImportReport(BaseModel):
     skipped_duplicates: int
     invalid_rows: int
     issues: list[StudentImportIssue]
+
+
+class ProfessorImportIssue(BaseModel):
+    row_number: int
+    email: str | None = None
+    reason: str
+
+
+class ProfessorImportReport(BaseModel):
+    file_name: str
+    dry_run: bool
+    total_rows: int
+    inserted_count: int
+    updated_count: int
+    skipped_duplicates: int
+    invalid_rows: int
+    issues: list[ProfessorImportIssue]

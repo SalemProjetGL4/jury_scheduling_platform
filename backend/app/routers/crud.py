@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app import models, schemas
+from app.services.professor_import import import_professors
 from app.services.project_import import import_projects
 from app.services.student_import import import_students
 
@@ -99,6 +100,35 @@ professor_router = build_crud_router(
     path="/professors",
     tag="professors",
 )
+
+
+@professor_router.post(
+    "/import",
+    response_model=schemas.ProfessorImportReport,
+    status_code=status.HTTP_201_CREATED,
+    name="import_professors",
+)
+def import_professors_endpoint(
+    file: UploadFile = File(...),
+    department_id: int | None = Form(default=None),
+    department_name: str | None = Form(default=None),
+    default_max_juries: int = Form(default=3),
+    dry_run: bool = Form(default=False),
+    db: Session = Depends(get_db),
+):
+    try:
+        report = import_professors(
+            db=db,
+            file_name=file.filename or "professors_upload",
+            content=file.file.read(),
+            default_department_id=department_id,
+            default_department_name=department_name,
+            default_max_juries=default_max_juries,
+            dry_run=dry_run,
+        )
+        return schemas.ProfessorImportReport.model_validate(report)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 student_router = build_crud_router(
     model=models.Student,
