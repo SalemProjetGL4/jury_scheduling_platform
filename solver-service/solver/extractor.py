@@ -32,7 +32,8 @@ def extract_assignments(
             assigned_professor = None
             for professor in data["professors"]:
                 pid = professor["id"]
-                if solver.Value(vars_.x[(pid, project_id, role, active_session["id"])]) == 1:
+                var = vars_.x.get((pid, project_id, role, active_session["id"]))
+                if var is not None and solver.Value(var) == 1:
                     assigned_professor = pid
                     break
             if assigned_professor is not None:
@@ -76,13 +77,38 @@ def build_infeasibility_report(data: dict[str, Any]) -> list[dict[str, str]]:
                 }
             )
 
-    if len(sessions) < len(projects):
-        violations.append(
-            {
-                "constraint": "project_slot_capacity",
-                "reason": "Number of sessions is less than number of projects",
-            }
-        )
+    # Professor capacity check: SUPERVISOR is mandatory (not capped), so only the two voluntary
+    # roles — PRESIDENT and EXAMINER — count against max_juries. Each project needs 2 voluntary
+    # role-assignments; total voluntary capacity must be ≥ projects × 2.
+    if professors:
+        total_voluntary_capacity = sum(p.get("max_juries", 2) for p in professors)
+        voluntary_roles_needed = len(projects) * 2  # PRESIDENT + EXAMINER only
+        if total_voluntary_capacity < voluntary_roles_needed:
+            avg_cap = total_voluntary_capacity // len(professors)
+            min_cap_needed = -(-voluntary_roles_needed // len(professors))  # ceiling division
+            violations.append(
+                {
+                    "constraint": "professor_capacity",
+                    "reason": (
+                        f"{len(professors)} professors × avg max_juries={avg_cap} "
+                        f"= {total_voluntary_capacity} voluntary jury slots, but "
+                        f"{len(projects)} projects × 2 voluntary roles (PRESIDENT+EXAMINER) "
+                        f"= {voluntary_roles_needed} needed. "
+                        f"Set max_juries ≥ {min_cap_needed} per professor "
+                        f"or reduce projects to ≤ {total_voluntary_capacity // 2}."
+                    ),
+                    "details": {
+                        "professors_count": len(professors),
+                        "total_voluntary_capacity": total_voluntary_capacity,
+                        "projects_count": len(projects),
+                        "voluntary_roles_per_project": 2,
+                        "voluntary_roles_needed": voluntary_roles_needed,
+                        "deficit": voluntary_roles_needed - total_voluntary_capacity,
+                        "min_max_juries_needed": min_cap_needed,
+                        "max_projects_feasible": total_voluntary_capacity // 2,
+                    },
+                }
+            )
 
     return violations
 

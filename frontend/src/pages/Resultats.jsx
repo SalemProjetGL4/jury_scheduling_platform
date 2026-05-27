@@ -98,11 +98,9 @@ function buildChartsFromDB(sessionId, slots, assignments) {
 
 // Parse orchestrator solver_result into display rows
 function buildSolutionsFromWorkflow(solverResult) {
-  if (!solverResult) { console.warn('[buildSolutionsFromWorkflow] solverResult is null'); return [] }
+  if (!solverResult) return []
   const { status, solutions, assignments } = solverResult
-  console.log('[buildSolutionsFromWorkflow] status:', status, '| solutions:', solutions?.length, '| assignments:', assignments?.length)
   const source = solutions?.length ? solutions : (assignments?.length ? [{ assignments }] : [])
-  if (!source.length) console.warn('[buildSolutionsFromWorkflow] source is empty — no solutions or assignments found in', solverResult)
   return source.map((sol, i) => {
     const aa = sol.assignments || []
     const conflicts = aa.filter(a => a.is_conflict).length
@@ -110,8 +108,9 @@ function buildSolutionsFromWorkflow(solverResult) {
     return {
       id: i + 1, label: `#${i + 1}`, score: Math.round(score),
       stars: Math.min(4, Math.round(score / 25)),
-      conflits: conflicts, jours: new Set(aa.map(a => a.date)).size,
-      salles: new Set(aa.map(a => a.session_id)).size,
+      conflits: conflicts,
+      jours: new Set(aa.map(a => a.date).filter(Boolean)).size,
+      salles: new Set(aa.map(a => a.room).filter(Boolean)).size || 1,
       soutenances: aa.length,
       recommended: i === (solverResult.recommended_index || 0),
       date: null, rawAssignments: aa, status,
@@ -124,12 +123,12 @@ function buildChartsFromWorkflow(sol) {
   const byDate = new Map(), bySalle = new Map()
   sol.rawAssignments.forEach(a => {
     if (a.date) byDate.set(a.date, (byDate.get(a.date) || 0) + 1)
-    const room = a.session_id || a.room || 'Salle'
+    const room = a.room || 'Salle 2B6-4'
     bySalle.set(room, (bySalle.get(room) || 0) + 1)
   })
   return {
     repartitionParJour: Array.from(byDate.entries()).sort().map(([d, v]) => ({ jour: fmt(d), value: v })),
-    repartitionParSalle: Array.from(bySalle.entries()).map(([r, v], i) => ({ name: `${r}`, value: v, color: ROOM_COLORS[i % ROOM_COLORS.length] })),
+    repartitionParSalle: Array.from(bySalle.entries()).map(([r, v], i) => ({ name: r, value: v, color: ROOM_COLORS[i % ROOM_COLORS.length] })),
   }
 }
 

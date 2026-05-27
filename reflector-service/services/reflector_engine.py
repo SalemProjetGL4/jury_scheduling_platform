@@ -12,8 +12,8 @@ import logging
 from pathlib import Path
 
 
-# configure logger
-LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
+# configure logger — /app/logs is volume-mounted from the host
+LOG_DIR = Path("/app/logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 logger = logging.getLogger("reflector")
 if not logger.handlers:

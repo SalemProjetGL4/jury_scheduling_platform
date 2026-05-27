@@ -1,4 +1,5 @@
 import datetime as dt
+from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -177,6 +178,75 @@ session_router = build_crud_router(
     tag="sessions",
 )
 
+
+@session_router.post(
+    "/generate-slots",
+    response_model=schemas.GenerateSlotsResponse,
+    status_code=status.HTTP_201_CREATED,
+    name="generate_slots",
+)
+def generate_slots(
+    payload: schemas.GenerateSlotsRequest,
+    db: Session = Depends(get_db),
+):
+    if payload.end_date < payload.start_date:
+        raise HTTPException(status_code=400, detail="end_date must be >= start_date")
+
+    room = db.query(models.Room).filter(models.Room.id == payload.room_id).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    session = models.Session(
+        status="planned",
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+    )
+    db.add(session)
+    db.flush()
+
+    slots_created = 0
+    days_covered = 0
+    current = payload.start_date
+    while current <= payload.end_date:
+        weekday = current.weekday()  # 0=Monday … 6=Sunday
+        if weekday == 6:  # skip Sunday
+            current += timedelta(days=1)
+            continue
+
+        days_covered += 1
+        is_saturday = weekday == 5
+
+        for slot_num in range(1, 5):
+            db.add(models.Slot(
+                date=current,
+                period="morning",
+                slot_number=slot_num,
+                room_id=payload.room_id,
+                session_id=session.id,
+            ))
+            slots_created += 1
+
+        if not is_saturday:
+            for slot_num in range(1, 5):
+                db.add(models.Slot(
+                    date=current,
+                    period="afternoon",
+                    slot_number=slot_num,
+                    room_id=payload.room_id,
+                    session_id=session.id,
+                ))
+                slots_created += 1
+
+        current += timedelta(days=1)
+
+    db.commit()
+    return schemas.GenerateSlotsResponse(
+        session_id=session.id,
+        slots_created=slots_created,
+        days_covered=days_covered,
+    )
+
+
 project_router = build_crud_router(
     model=models.Project,
     create_schema=schemas.ProjectCreate,
@@ -212,6 +282,15 @@ def import_projects_endpoint(
         return schemas.ProjectImportReport.model_validate(report)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+room_router = build_crud_router(
+    model=models.Room,
+    create_schema=schemas.RoomCreate,
+    update_schema=schemas.RoomUpdate,
+    out_schema=schemas.RoomOut,
+    path="/rooms",
+    tag="rooms",
+)
 
 slot_router = build_crud_router(
     model=models.Slot,

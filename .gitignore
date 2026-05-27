@@ -11,3 +11,9 @@ env/
 venv/
 .env
 sample_data/
+.claude/
+.github/
+logs/
+backend/db/data extraction/data/*
+node_modules/
+dist/

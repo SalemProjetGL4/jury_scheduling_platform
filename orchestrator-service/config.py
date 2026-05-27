@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     llm_model: str = "llama-3.3-70b-versatile"
     llm_timeout_seconds: int = 30
     llm_max_retries: int = 2
+    solver_timeout_seconds: int = 600
 
     gemini_api_key: str | None = None
     groq_api_key: str | None = None

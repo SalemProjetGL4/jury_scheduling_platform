@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Upload, CheckCircle2, FileText, Trash2 } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Upload, CheckCircle2, FileText, Trash2, CalendarDays } from 'lucide-react'
 import { apiRequest } from '../services/api'
 
 const FILE_TYPES = [
@@ -109,6 +109,23 @@ function DropZone({
   )
 }
 
+function countSlotsPreview(startDate, endDate) {
+  if (!startDate || !endDate) return null
+  const start = new Date(startDate + 'T00:00:00')
+  const end = new Date(endDate + 'T00:00:00')
+  if (end < start) return null
+  let slots = 0
+  let days = 0
+  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const dow = d.getDay() // 0=Sun, 6=Sat
+    if (dow === 0) continue
+    days++
+    slots += 4
+    if (dow !== 6) slots += 4
+  }
+  return { slots, days }
+}
+
 export default function Donnees() {
   const [uploaded, setUploaded] = useState({ project: false, professor: false })
   const [uploadedFiles, setUploadedFiles] = useState({ project: '', professor: '' })
@@ -116,6 +133,47 @@ export default function Donnees() {
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
   const [uploadSuccess, setUploadSuccess] = useState('')
+
+  const [rooms, setRooms] = useState([])
+  const [genStart, setGenStart] = useState('')
+  const [genEnd, setGenEnd] = useState('')
+  const [genRoom, setGenRoom] = useState('')
+  const [generating, setGenerating] = useState(false)
+  const [genError, setGenError] = useState('')
+  const [genSuccess, setGenSuccess] = useState('')
+
+  useEffect(() => {
+    apiRequest('/rooms').then(data => {
+      setRooms(data || [])
+      if (data?.length) setGenRoom(String(data[0].id))
+    }).catch(() => {})
+  }, [])
+
+  async function handleGenerate() {
+    if (!genStart || !genEnd || !genRoom) {
+      setGenError('Remplissez tous les champs.')
+      return
+    }
+    setGenerating(true)
+    setGenError('')
+    setGenSuccess('')
+    try {
+      const result = await apiRequest('/sessions/generate-slots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ start_date: genStart, end_date: genEnd, room_id: parseInt(genRoom) }),
+      })
+      setGenSuccess(
+        `Session #${result.session_id} créée — ${result.slots_created} créneaux sur ${result.days_covered} jour(s).`
+      )
+    } catch (err) {
+      setGenError(err.message || 'Erreur lors de la génération.')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const preview = countSlotsPreview(genStart, genEnd)
 
   function handleSelectFile(id, event) {
     const file = event?.target?.files?.[0]
@@ -212,6 +270,90 @@ export default function Donnees() {
         {uploadSuccess && (
           <div className="mt-4 text-xs text-green-700 bg-green-50 border border-green-100 rounded-lg px-3 py-2">
             {uploadSuccess}
+          </div>
+        )}
+      </div>
+
+      {/* Session / slot generator */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <div className="flex items-center gap-2 mb-1">
+          <CalendarDays size={16} className="text-blue-600" />
+          <h2 className="text-base font-semibold text-gray-900">Créer une session</h2>
+        </div>
+        <p className="text-sm text-gray-500 mb-5">
+          Sélectionnez une plage de dates et une salle. Les créneaux seront générés automatiquement&nbsp;:
+          4 créneaux matin (8h–12h) et 4 après-midi (13h–17h), sans dimanche, samedi matin seulement.
+        </p>
+
+        <div className="grid grid-cols-3 gap-4 mb-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Date de début</label>
+            <input
+              type="date"
+              value={genStart}
+              onChange={e => { setGenStart(e.target.value); setGenError(''); setGenSuccess('') }}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Date de fin</label>
+            <input
+              type="date"
+              value={genEnd}
+              min={genStart || undefined}
+              onChange={e => { setGenEnd(e.target.value); setGenError(''); setGenSuccess('') }}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Salle</label>
+            <select
+              value={genRoom}
+              onChange={e => setGenRoom(e.target.value)}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"
+            >
+              {rooms.length === 0 && <option value="">Chargement…</option>}
+              {rooms.map(r => (
+                <option key={r.id} value={String(r.id)}>{r.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {preview && (
+          <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-4 py-3 text-xs text-blue-700">
+            <span className="font-medium">{preview.slots} créneaux</span> sur{' '}
+            <span className="font-medium">{preview.days} jour(s)</span> ouvré(s) —{' '}
+            4 matin × {preview.days} jours
+            {genStart && genEnd && (() => {
+              const start = new Date(genStart + 'T00:00:00')
+              const end = new Date(genEnd + 'T00:00:00')
+              let sat = 0
+              for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+                if (d.getDay() === 6) sat++
+              }
+              return sat > 0 ? ` (${sat} sam. sans après-midi)` : ''
+            })()}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={handleGenerate}
+          disabled={generating || !genStart || !genEnd || !genRoom}
+          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+        >
+          {generating ? 'Génération…' : 'Générer les créneaux'}
+        </button>
+
+        {genError && (
+          <div className="mt-3 text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+            {genError}
+          </div>
+        )}
+        {genSuccess && (
+          <div className="mt-3 text-xs text-green-700 bg-green-50 border border-green-100 rounded-lg px-3 py-2">
+            {genSuccess}
           </div>
         )}
       </div>

@@ -65,8 +65,9 @@ def build_db_snapshot() -> dict[str, Any]:
         slot_rows = conn.execute(
             text(
                 """
-                SELECT s.id, s.session_id, s.date, s.period, s.slot_number, s.room
+                SELECT s.id, s.session_id, s.date, s.period, s.slot_number, r.name AS room
                 FROM slot s
+                JOIN room r ON r.id = s.room_id
                 ORDER BY s.id
                 """
             )

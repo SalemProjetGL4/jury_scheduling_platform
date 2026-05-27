@@ -59,6 +59,18 @@ CREATE TABLE IF NOT EXISTS professor_domain (
 -- SESSION & SCHEDULING
 -- =====================
 
+CREATE TABLE IF NOT EXISTS room (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE
+);
+
+INSERT INTO room (name) VALUES
+    ('2B6-4'),
+    ('2B6-3'),
+    ('2B6-2'),
+    ('2B6-1')
+ON CONFLICT (name) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS session (
     id BIGSERIAL PRIMARY KEY,
     start_date DATE NOT NULL,
@@ -71,7 +83,7 @@ CREATE TABLE IF NOT EXISTS slot (
     date DATE NOT NULL,
     period TEXT NOT NULL CHECK (period IN ('morning', 'afternoon')),
     slot_number INT NOT NULL,
-    room TEXT NOT NULL,
+    room_id BIGINT NOT NULL REFERENCES room(id),
     session_id BIGINT NOT NULL REFERENCES session(id) ON DELETE CASCADE
 );
 

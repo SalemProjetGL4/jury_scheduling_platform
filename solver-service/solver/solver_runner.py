@@ -18,7 +18,13 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
     Input: structured JSON
     Output: schedule or infeasibility report
     """
+    import time
+    import logging
+    _log = logging.getLogger("solver")
+
+    t0 = time.monotonic()
     precheck_violations = build_infeasibility_report(data)
+    _log.info("TIMING precheck: %.2fs", time.monotonic() - t0)
     if precheck_violations:
         return {
             "status": "INFEASIBLE",
@@ -28,19 +34,42 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
     options = data.get("solver_options", {})
     max_solutions = _as_positive_int(options.get("max_solutions"), default=1)
     include_soft_diagnostics = bool(options.get("include_soft_diagnostics", True))
-    include_conflict_refiner = bool(options.get("include_conflict_refiner", True))
 
+    # Auto-disable conflict refiner for large problems: it adds one BoolVar assumption
+    # per constraint (~150K vars for 236 projects × 194 slots), doubling model size and
+    # making constraint building 2-3× slower.
+    n_proj = len(data.get("projects", []))
+    n_slots = len(data.get("sessions", []))
+    auto_large = n_proj * n_slots > 10_000
+    include_conflict_refiner = bool(options.get("include_conflict_refiner", not auto_large))
+    _log.info("SOLVE config — max_solutions=%d conflict_refiner=%s (auto_large=%s)", max_solutions, include_conflict_refiner, auto_large)
+
+    t1 = time.monotonic()
     bundle = build_model(data, include_conflict_refiner=include_conflict_refiner)
+    _log.info("TIMING model_build: %.2fs", time.monotonic() - t1)
 
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 30
-    solver.parameters.num_search_workers = 1
-    solver.parameters.random_seed = 0
+    solver.parameters.max_time_in_seconds = options.get("max_time_seconds", 240)
+    solver.parameters.num_search_workers = options.get("num_workers", 4)
+    # Use caller-supplied seed for reproducibility, or a time-based seed so
+    # repeated runs with the same data explore different parts of the solution space.
+    _seed = options.get("random_seed")
+    solver.parameters.random_seed = int(_seed) if _seed is not None else int(time.time()) % (2 ** 31)
+
+    # For large models, stop as soon as any feasible solution is found rather than
+    # spending the full time limit proving optimality. The first feasible solution
+    # comes quickly (seconds); proving optimality can take minutes.
+    stop_after_first = bool(options.get("stop_after_first_solution", auto_large))
 
     solutions: list[dict[str, Any]] = []
 
+    class _FirstSolutionStopper(cp_model.CpSolverSolutionCallback):
+        def on_solution_callback(self) -> None:
+            self.StopSearch()
+
     while len(solutions) < max_solutions:
-        status = solver.Solve(bundle.model)
+        callback = _FirstSolutionStopper() if stop_after_first else None
+        status = solver.Solve(bundle.model, callback)
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             break
 
@@ -77,6 +106,25 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
             "solutions_limit_reached": max_solutions > 1 and len(solutions) >= max_solutions,
         }
         return response
+
+    last_status = solver.StatusName(status)
+    _log.info("CP-SAT last status: %s", last_status)
+
+    # Distinguish timeout (UNKNOWN) from proven infeasibility (INFEASIBLE).
+    if last_status == "UNKNOWN":
+        return {
+            "status": "INFEASIBLE",
+            "failed_constraints": [
+                {
+                    "constraint": "cp_sat_timeout",
+                    "reason": (
+                        f"Solver did not find a feasible solution within the time limit "
+                        f"({solver.parameters.max_time_in_seconds}s). "
+                        "Try increasing SOLVER_MAX_TIME_SECONDS or reducing the problem size."
+                    ),
+                }
+            ],
+        }
 
     conflict_report: list[dict[str, Any]] = []
     if include_conflict_refiner and bundle.assumptions is not None:
@@ -118,7 +166,9 @@ def _add_no_good_cut(
             professor_id = roles.get(role.lower())
             if professor_id is None:
                 continue
-            selected_literals.append(vars_.x[(int(professor_id), project_id, role, session_id)])
+            var = vars_.x.get((int(professor_id), project_id, role, session_id))
+            if var is not None:
+                selected_literals.append(var)
 
     if selected_literals:
         model.Add(sum(selected_literals) <= len(selected_literals) - 1)

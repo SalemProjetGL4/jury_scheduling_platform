@@ -9,9 +9,14 @@ function EventCard({ event }) {
   const c = JURY_COLORS[event.jury] || JURY_COLORS[1]
   return (
     <div className={`rounded-md px-2 py-1.5 text-xs border mb-1 ${c.bg} ${c.text} ${c.border}`}>
-      <p className="font-semibold truncate">{event.prof}</p>
-      <p className="opacity-75">{event.start} - {event.end}</p>
-      <p className="opacity-60">Jury {event.jury}</p>
+      <p className="font-semibold truncate" title={event.prof}>{event.prof}</p>
+      {event.title
+        ? <p className="opacity-70 truncate mt-0.5 leading-tight" title={event.title} style={{ fontSize: '10px' }}>{event.title}</p>
+        : <p className="opacity-75 mt-0.5">{event.start}–{event.end}</p>
+      }
+      {event.juryInfo && (
+        <p className="opacity-60 mt-0.5 leading-tight" style={{ fontSize: '10px' }}>{event.juryInfo}</p>
+      )}
     </div>
   )
 }
@@ -156,41 +161,63 @@ function buildCalendarData(slots, assignments, professors) {
   return { days, rooms, events }
 }
 
+function abbrevName(name) {
+  if (!name) return null
+  const parts = name.trim().split(/\s+/)
+  if (parts.length < 2) return name
+  return `${parts[0][0]}. ${parts[parts.length - 1]}`
+}
+
+const PERIOD_ORDER = ['morning', 'afternoon']
+const PERIOD_LABELS = {
+  morning:   'Matin (09:00 – 12:00)',
+  afternoon: 'Après-midi (14:00 – 17:00)',
+}
+
 function buildCalendarFromSolution(rawAssignments) {
-  const uniqueDates = [...new Set(rawAssignments.map(a => a.date).filter(Boolean))].sort()
-  const uniqueRooms = [...new Set(rawAssignments.map(a => String(a.room ?? a.session_id ?? 'A')).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+  if (!rawAssignments?.length) return { days: [], rooms: [], events: [] }
+
+  const uniqueDates  = [...new Set(rawAssignments.map(a => a.date).filter(Boolean))].sort()
+  const usedPeriods  = PERIOD_ORDER.filter(p => rawAssignments.some(a => a.period === p))
 
   const days = uniqueDates.map(date => ({
-    key: date,
+    key:   date,
     label: formatWeekdayShort(date),
-    date: formatDateShort(date),
+    date:  formatDateShort(date),
   }))
 
-  const rooms = uniqueRooms.map(r => ({
-    id: r,
-    label: formatRoomLabel(r),
+  // Use period as the row dimension: gives a clean 2-row × N-day grid
+  const rooms = usedPeriods.map(p => ({
+    id:     p,
+    label:  PERIOD_LABELS[p] || p,
     places: null,
   }))
 
-  const events = rawAssignments.map((a, i) => {
-    if (!a.date) return null
-    const room = String(a.room ?? a.session_id ?? 'A')
-    const start = a.start_time || a.slot_start || `${String(9 + (i % 7)).padStart(2, '0')}:00`
-    const end   = a.end_time   || a.slot_end   || `${String(10 + (i % 7)).padStart(2, '0')}:00`
-    const prof  = a.examiner_name || a.president_name
-      || (a.examiner_id ? `Prof #${a.examiner_id}` : null)
-      || (a.president_id ? `Président #${a.president_id}` : null)
-      || `Projet #${a.project_id ?? i}`
+  const events = rawAssignments.filter(a => a.date && a.period).map((a, i) => {
+    const isMorning = a.period === 'morning'
+    const start = isMorning ? '09:00' : '14:00'
+    const end   = isMorning ? '12:00' : '17:00'
+
+    const student = a.student_name || `Projet #${a.project_id ?? i}`
+
+    const juryInfo = [
+      a.supervisor_name && `Enc: ${abbrevName(a.supervisor_name)}`,
+      a.president_name  && `Prés: ${abbrevName(a.president_name)}`,
+      a.examiner_name   && `Exam: ${abbrevName(a.examiner_name)}`,
+    ].filter(Boolean).join(' · ')
+
     return {
-      id: a.id ?? i,
-      salle: room,
-      day: a.date,
+      id:       a.project_id ?? i,
+      salle:    a.period,          // period is the row key
+      day:      a.date,
       start,
       end,
-      prof,
-      jury: ((Number(a.examiner_id || a.president_id || i) % 5) + 1),
+      prof:     student,
+      title:    a.project_title ?? null,
+      juryInfo: juryInfo || null,
+      jury:     ((Number(a.president_id || a.examiner_id || a.project_id || i) % 5) + 1),
     }
-  }).filter(Boolean)
+  })
 
   return { days, rooms, events }
 }
@@ -214,7 +241,7 @@ function buildSessionOptions(sessions, slots, assignments) {
 }
 
 export default function Calendrier() {
-  const { selectedSolution, clearSelectedSolution } = useWorkflow()
+  const { selectedSolution, clearSelectedSolution, result: workflowResult } = useWorkflow()
   const navigate = useNavigate()
 
   const [view, setView] = useState('Semaine')
@@ -279,8 +306,9 @@ export default function Calendrier() {
   }, [])
 
   useEffect(() => {
-    // Don't override calendar if a specific solution is pinned
+    // Don't override calendar if a solution is pinned or workflow result is loaded
     if (selectedSolution?.rawAssignments?.length) return
+    if (workflowResult?.solver_result?.assignments?.length) return
 
     if (!slots.length) {
       setWeeks([])
@@ -307,21 +335,26 @@ export default function Calendrier() {
     const nextWeeks = buildWeeksFromDays(data.days)
     setWeeks(nextWeeks)
     setWeekIndex(current => Math.min(current, Math.max(0, nextWeeks.length - 1)))
-  }, [sessions, slots, assignments, professors, selectedSessionId, selectedSolution])
+  }, [sessions, slots, assignments, professors, selectedSessionId, selectedSolution, workflowResult])
 
   useEffect(() => {
     setWeekIndex(0)
   }, [selectedSessionId])
 
-  // Load solution pinned from Resultats page
+  // Load solution: pinned from Resultats page, OR fall back to latest workflow result
   useEffect(() => {
-    if (!selectedSolution?.rawAssignments?.length) return
-    const { days, rooms: solRooms, events: solEvents } = buildCalendarFromSolution(selectedSolution.rawAssignments)
+    const assignments =
+      selectedSolution?.rawAssignments?.length ? selectedSolution.rawAssignments
+      : workflowResult?.solver_result?.assignments?.length ? workflowResult.solver_result.assignments
+      : null
+
+    if (!assignments) return
+    const { days, rooms: solRooms, events: solEvents } = buildCalendarFromSolution(assignments)
     setRooms(solRooms)
     setEvents(solEvents)
     setWeeks(buildWeeksFromDays(days))
     setWeekIndex(0)
-  }, [selectedSolution])
+  }, [selectedSolution, workflowResult])
 
   const activeWeek = weeks[weekIndex] || weeks[0]
   const visibleDays = activeWeek?.days || []
@@ -341,17 +374,22 @@ export default function Calendrier() {
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       {/* Solution origin banner */}
-      {selectedSolution && (
+      {(selectedSolution || workflowResult?.solver_result?.assignments?.length > 0) && (
         <div className="flex items-center gap-2 px-5 py-2 bg-blue-50 border-b border-blue-100">
           <span className="text-xs text-blue-700 font-medium">
-            Affichage de la solution {selectedSolution.label} — score {selectedSolution.score}%
+            {selectedSolution
+              ? `Solution ${selectedSolution.label} — score ${selectedSolution.score}%`
+              : `Dernière génération — ${workflowResult.solver_result.assignments.length} soutenances planifiées`
+            }
           </span>
-          <button
-            onClick={clearSelectedSolution}
-            className="ml-auto flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700"
-          >
-            <X size={12} /> Fermer
-          </button>
+          {selectedSolution && (
+            <button
+              onClick={clearSelectedSolution}
+              className="ml-auto flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700"
+            >
+              <X size={12} /> Fermer
+            </button>
+          )}
         </div>
       )}
 

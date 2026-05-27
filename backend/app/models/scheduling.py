@@ -1,9 +1,16 @@
 import datetime as dt
 
 from sqlalchemy import CheckConstraint, Date, ForeignKey, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
+
+
+class Room(Base):
+    __tablename__ = "room"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
 
 
 class Session(Base):
@@ -28,8 +35,14 @@ class Slot(Base):
     date: Mapped[dt.date] = mapped_column(Date, nullable=False)
     period: Mapped[str] = mapped_column(String, nullable=False)
     slot_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    room: Mapped[str] = mapped_column(String, nullable=False)
+    room_id: Mapped[int] = mapped_column(ForeignKey("room.id"), nullable=False)
     session_id: Mapped[int] = mapped_column(ForeignKey("session.id", ondelete="CASCADE"), nullable=False)
+
+    room_obj: Mapped[Room] = relationship("Room", lazy="joined")
+
+    @property
+    def room(self) -> str:
+        return self.room_obj.name if self.room_obj else ""
 
 
 class Project(Base):

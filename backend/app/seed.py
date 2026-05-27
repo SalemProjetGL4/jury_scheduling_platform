@@ -22,6 +22,7 @@ from app.models import (
     Professor,
     ProfessorDomain,
     Project,
+    Room,
     Session as JurySession,
     Slot,
     Student,
@@ -144,11 +145,38 @@ def _time_to_minutes(time_value: str | None) -> int:
     return int(hour) * 60 + int(minute)
 
 
+# Permitted jury hours: 08:00–11:59 (morning) and 13:00–16:59 (afternoon).
+# Lunch break (12:xx) and outside-hours (<08:00, ≥17:00) are never allowed.
+_MORNING_START = 8 * 60    # 08:00 in minutes
+_MORNING_END   = 12 * 60   # 12:00 exclusive
+_AFTERNOON_START = 13 * 60 # 13:00
+_AFTERNOON_END   = 17 * 60 # 17:00 exclusive
+
+
 def _period_from_time(time_value: str | None) -> str:
     if not time_value:
         return "morning"
     hour = int(time_value.split(":")[0])
     return "morning" if hour < 12 else "afternoon"
+
+
+def _is_valid_slot(date: dt.date | None, time_value: str | None) -> bool:
+    """True only when (date, time) falls inside an allowed jury window:
+    - Sunday (weekday 6): never.
+    - Saturday (weekday 5): morning window only (08:00–11:59).
+    - Monday–Friday: morning OR afternoon window.
+    """
+    if date is None or time_value is None:
+        return False
+    weekday = date.weekday()  # 0 = Monday … 6 = Sunday
+    if weekday == 6:
+        return False
+    minutes = _time_to_minutes(time_value)
+    in_morning = _MORNING_START <= minutes < _MORNING_END
+    in_afternoon = _AFTERNOON_START <= minutes < _AFTERNOON_END
+    if weekday == 5:            # Saturday — morning only
+        return in_morning
+    return in_morning or in_afternoon
 
 
 def _promotion_from_session(label: str | None) -> dt.date | None:
@@ -236,8 +264,22 @@ def seed_from_pfe_data(
     projects = {}
     slots = {}
     slot_counters: dict[tuple[int, dt.date, str], int] = {}
+    room_cache: dict[str, Room] = {}
     department_domain_pairs: set[tuple[int, int]] = set()
     professor_domain_pairs: set[tuple[int, int]] = set()
+
+    def get_or_create_room(name: str) -> Room:
+        if name in room_cache:
+            return room_cache[name]
+        existing = db.execute(select(Room).where(Room.name == name)).scalar_one_or_none()
+        if existing:
+            room_cache[name] = existing
+            return existing
+        room = Room(name=name)
+        db.add(room)
+        db.flush()
+        room_cache[name] = room
+        return room
 
     def get_professor(name: str | None, dept_code: str) -> Professor | None:
         if not name:
@@ -357,7 +399,9 @@ def seed_from_pfe_data(
                 db.add(ProfessorDomain(professor_id=professor.id, domain_id=domain.id))
                 professor_domain_pairs.add(prof_domain_key)
 
-        if item["date"] is None or item["time"] is None:
+        # Enforce allowed windows: 08:00–12:00 morning / 13:00–17:00 afternoon,
+        # no Sunday, no Saturday afternoon.
+        if not _is_valid_slot(item["date"], item["time"]):
             continue
 
         slot_key = (session.id, item["date"], item["room"], item["time"])
@@ -370,7 +414,7 @@ def seed_from_pfe_data(
                 date=item["date"],
                 period=_period_from_time(item["time"]),
                 slot_number=slot_number,
-                room=item["room"],
+                room_id=get_or_create_room(item["room"]).id,
                 session_id=session.id,
             )
             db.add(slot)
@@ -462,8 +506,9 @@ def seed(db: Session) -> None:
     db.add_all([student_a, student_b])
     db.flush()
 
-    session_1 = JurySession(status="planned", start_date=dt.date(2026, 6, 20), end_date=dt.date(2026, 6, 20))
-    session_2 = JurySession(status="planned", start_date=dt.date(2026, 6, 21), end_date=dt.date(2026, 6, 21))
+    # June 22 = Monday, June 23 = Tuesday — both valid working days.
+    session_1 = JurySession(status="planned", start_date=dt.date(2026, 6, 22), end_date=dt.date(2026, 6, 22))
+    session_2 = JurySession(status="planned", start_date=dt.date(2026, 6, 23), end_date=dt.date(2026, 6, 23))
     db.add_all([session_1, session_2])
     db.flush()
 
@@ -482,18 +527,24 @@ def seed(db: Session) -> None:
     db.add_all([project_a, project_b])
     db.flush()
 
+    room_a = Room(name="2B6-4")
+    room_b = Room(name="2B6-3")
+    db.add_all([room_a, room_b])
+    db.flush()
+
+    # Morning 08:00–09:00 on Monday June 22; afternoon 13:00–14:00 on Tuesday June 23.
     slot_1 = Slot(
-        date=dt.date(2026, 6, 20),
+        date=dt.date(2026, 6, 22),
         period="morning",
         slot_number=1,
-        room="A-101",
+        room_id=room_a.id,
         session_id=session_1.id,
     )
     slot_2 = Slot(
-        date=dt.date(2026, 6, 21),
+        date=dt.date(2026, 6, 23),
         period="afternoon",
-        slot_number=2,
-        room="B-204",
+        slot_number=1,
+        room_id=room_b.id,
         session_id=session_2.id,
     )
     db.add_all([slot_1, slot_2])
@@ -503,12 +554,12 @@ def seed(db: Session) -> None:
         [
             Unavailability(
                 professor_id=prof_a.id,
-                date=dt.date(2026, 6, 21),
+                date=dt.date(2026, 6, 23),   # Tuesday afternoon
                 period="afternoon",
             ),
             Unavailability(
                 professor_id=prof_b.id,
-                date=dt.date(2026, 6, 20),
+                date=dt.date(2026, 6, 22),   # Monday morning
                 period="morning",
             ),
         ]

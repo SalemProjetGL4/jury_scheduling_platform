@@ -16,15 +16,26 @@ def apply_hard_constraints(
     vars_: VariableBundle,
     *,
     assumption_registry: AssumptionRegistry | None = None,
-) -> None:
+) -> dict[tuple[int, int], cp_model.IntVar]:
     professors = data["professors"]
     projects = data["projects"]
     sessions = data["sessions"]
 
     professor_ids = [p["id"] for p in professors]
+    project_ids = [p["id"] for p in projects]
+    session_ids = [s["id"] for s in sessions]
+
     max_juries_per_professor = _as_int(data.get("constraints", {}).get("hard_max_juries", 2))
     if max_juries_per_professor is None or max_juries_per_professor < 0:
         max_juries_per_professor = 2
+
+    from solver.variables import NON_SUPERVISOR_ROLES
+
+    # Precompute supervisor map: prof_id → list of project_ids they supervise.
+    # Used to look up SUPERVISOR variables without expensive .get() calls.
+    supervisor_by_prof: dict[int, list[int]] = defaultdict(list)
+    for project in projects:
+        supervisor_by_prof[project["supervisor_id"]].append(project["id"])
 
     # Every project is scheduled in exactly one session.
     for project in projects:
@@ -42,9 +53,41 @@ def apply_hard_constraints(
         )
 
     # Role uniqueness and role/session linkage.
+    # SUPERVISOR: only one variable exists per (project, session) — for the actual supervisor.
+    # PRESIDENT/EXAMINER: all professor variables exist.
     for project in projects:
         project_id = project["id"]
-        for role in ROLES:
+        supervisor_id = project["supervisor_id"]
+
+        # --- SUPERVISOR role ---
+        assumption_sv = _new_assumption(
+            assumption_registry,
+            key="role_unique_per_project",
+            reason="Each project must have exactly one professor for the role",
+            details={"project_id": project_id, "role": "SUPERVISOR"},
+        )
+        _add_constraint(
+            model,
+            sum(vars_.x[(supervisor_id, project_id, "SUPERVISOR", s["id"])] for s in sessions) == 1,
+            assumption_sv,
+        )
+        for session in sessions:
+            session_id = session["id"]
+            assumption_link = _new_assumption(
+                assumption_registry,
+                key="role_session_link",
+                reason="Supervisor assignment must match the session where the project is scheduled",
+                details={"project_id": project_id, "role": "SUPERVISOR", "session_id": session_id},
+            )
+            _add_constraint(
+                model,
+                vars_.x[(supervisor_id, project_id, "SUPERVISOR", session_id)]
+                == vars_.y[(project_id, session_id)],
+                assumption_link,
+            )
+
+        # --- PRESIDENT / EXAMINER roles ---
+        for role in NON_SUPERVISOR_ROLES:
             assumption = _new_assumption(
                 assumption_registry,
                 key="role_unique_per_project",
@@ -58,7 +101,7 @@ def apply_hard_constraints(
             )
             for session in sessions:
                 session_id = session["id"]
-                assumption = _new_assumption(
+                assumption_link = _new_assumption(
                     assumption_registry,
                     key="role_session_link",
                     reason="Role assignments must match the session where the project is scheduled",
@@ -68,72 +111,69 @@ def apply_hard_constraints(
                     model,
                     sum(vars_.x[(pid, project_id, role, session_id)] for pid in professor_ids)
                     == vars_.y[(project_id, session_id)],
-                    assumption,
+                    assumption_link,
                 )
 
-    # One role per professor per session.
+    # One role per professor per session + max juries cap.
+    #
+    # Optimisation: instead of a single giant sum over all projects × roles × sessions
+    # (which creates 91 K-term OR-Tools expressions), we introduce a per-(prof, slot)
+    # IntVar `session_load` that captures the number of role-assignments in that slot.
+    # - session_load ≤ 1  →  one_role_per_professor_session
+    # - Σ session_load ≤ max_juries  →  max_juries_per_professor (194-term sum instead of 92 K)
+    #
+    # For PRESIDENT/EXAMINER: all professor × project combinations have variables — direct access.
+    # For SUPERVISOR: only the actual supervisor has a variable — looked up from supervisor_by_prof.
+    session_load_vars: dict[tuple[int, int], cp_model.IntVar] = {}
+
     for pid in professor_ids:
+        supervised_project_ids = supervisor_by_prof.get(pid, [])
         for session in sessions:
             session_id = session["id"]
+            # PRESIDENT/EXAMINER: direct access, no .get() needed
+            role_terms = [
+                vars_.x[(pid, pr_id, role, session_id)]
+                for pr_id in project_ids
+                for role in NON_SUPERVISOR_ROLES
+            ]
+            # SUPERVISOR: only the projects this professor supervises
+            for pr_id in supervised_project_ids:
+                role_terms.append(vars_.x[(pid, pr_id, "SUPERVISOR", session_id)])
+
+            session_load = model.NewIntVar(0, len(role_terms), f"sl_{pid}_{session_id}")
+            model.Add(session_load == sum(role_terms))
+
             assumption = _new_assumption(
                 assumption_registry,
                 key="one_role_per_professor_session",
                 reason="Professor can hold at most one role per session",
                 details={"professor_id": pid, "session_id": session_id},
             )
-            _add_constraint(
-                model,
-                sum(vars_.x[(pid, project["id"], role, session_id)] for project in projects for role in ROLES)
-                <= 1,
-                assumption,
-            )
+            _add_constraint(model, session_load <= 1, assumption)
+            session_load_vars[(pid, session_id)] = session_load
+    # session_load_vars is returned so soft constraints can reuse it without recomputing.
 
-    # Base cap: each professor can serve in at most two juries overall.
+    # Max juries cap applies only to voluntary (PRESIDENT/EXAMINER) assignments.
+    # Supervisor-role assignments are mandatory — a professor must attend every project they supervise,
+    # so those do not count against their voluntary jury quota.
     for pid in professor_ids:
+        total_load = sum(session_load_vars[(pid, s["id"])] for s in sessions)
+        # Sum of mandatory SUPERVISOR assignments for this professor across all sessions.
+        mandatory_supervisor_load = sum(
+            vars_.x[(pid, pr_id, "SUPERVISOR", s["id"])]
+            for pr_id in supervisor_by_prof.get(pid, [])
+            for s in sessions
+        )
         assumption = _new_assumption(
             assumption_registry,
             key="max_juries_per_professor",
-            reason="Professor cannot exceed the maximum number of juries",
+            reason="Professor cannot exceed the maximum number of voluntary (non-supervisor) jury assignments",
             details={"professor_id": pid, "max_juries": max_juries_per_professor},
         )
-        _add_constraint(
-            model,
-            sum(
-                vars_.x[(pid, project["id"], role, session["id"])]
-                for project in projects
-                for role in ROLES
-                for session in sessions
-            )
-            <= max_juries_per_professor,
-            assumption,
-        )
-
-    # Supervisor role is fixed to the project's supervisor only.
-    for project in projects:
-        project_id = project["id"]
-        supervisor_id = project["supervisor_id"]
-        assumption = _new_assumption(
-            assumption_registry,
-            key="supervisor_fixed",
-            reason="Supervisor role is fixed to the project's supervisor",
-            details={"project_id": project_id, "supervisor_id": supervisor_id},
-        )
-        for session in sessions:
-            session_id = session["id"]
-            _add_constraint(
-                model,
-                vars_.x[(supervisor_id, project_id, "SUPERVISOR", session_id)] == vars_.y[(project_id, session_id)],
-                assumption,
-            )
-            for pid in professor_ids:
-                if pid != supervisor_id:
-                    _add_constraint(
-                        model,
-                        vars_.x[(pid, project_id, "SUPERVISOR", session_id)] == 0,
-                        assumption,
-                    )
+        _add_constraint(model, total_load <= max_juries_per_professor + mandatory_supervisor_load, assumption)
 
     # Half-day exclusivity per professor/day.
+    # (supervisor_fixed already enforced above via role_session_link for SUPERVISOR role)
     sessions_by_day_period: dict[tuple[str, str], list[int]] = defaultdict(list)
     day_values: set[str] = set()
     for session in sessions:
@@ -157,18 +197,9 @@ def apply_hard_constraints(
             morning_sessions = sessions_by_day_period.get((day, "morning"), [])
             afternoon_sessions = sessions_by_day_period.get((day, "afternoon"), [])
 
-            morning_sum = sum(
-                vars_.x[(pid, project["id"], role, sid)]
-                for sid in morning_sessions
-                for project in projects
-                for role in ROLES
-            )
-            afternoon_sum = sum(
-                vars_.x[(pid, project["id"], role, sid)]
-                for sid in afternoon_sessions
-                for project in projects
-                for role in ROLES
-            )
+            # Reuse session_load_vars (already computed above) — avoids re-summing all role terms.
+            morning_sum = sum(session_load_vars[(pid, sid)] for sid in morning_sessions) if morning_sessions else 0
+            afternoon_sum = sum(session_load_vars[(pid, sid)] for sid in afternoon_sessions) if afternoon_sessions else 0
 
             _add_constraint(model, morning_sum <= max(1, len(morning_sessions)) * morning_b, assumption)
             _add_constraint(model, afternoon_sum <= max(1, len(afternoon_sessions)) * afternoon_b, assumption)
@@ -197,11 +228,9 @@ def apply_hard_constraints(
                 if blocked_period == "full_day" or blocked_period == session_period:
                     for project in projects:
                         for role in ROLES:
-                            _add_constraint(
-                                model,
-                                vars_.x[(pid, project["id"], role, session["id"])] == 0,
-                                assumption,
-                            )
+                            v = vars_.x.get((pid, project["id"], role, session["id"]))
+                            if v is not None:
+                                _add_constraint(model, v == 0, assumption)
 
     # Conflict of interest: conflicting professors cannot both be on same project/session.
     for pair in data.get("conflicts", []):
@@ -222,15 +251,13 @@ def apply_hard_constraints(
                         "session_id": session_id,
                     },
                 )
-                _add_constraint(
-                    model,
-                    sum(vars_.x[(p1, project_id, role, session_id)] for role in ROLES)
-                    + sum(vars_.x[(p2, project_id, role, session_id)] for role in ROLES)
-                    <= 1,
-                    assumption,
-                )
+                p1_vars = [v for role in ROLES if (v := vars_.x.get((p1, project_id, role, session_id))) is not None]
+                p2_vars = [v for role in ROLES if (v := vars_.x.get((p2, project_id, role, session_id))) is not None]
+                if p1_vars or p2_vars:
+                    _add_constraint(model, sum(p1_vars + p2_vars) <= 1, assumption)
 
     apply_custom_hard_constraints(model, data, vars_, assumption_registry=assumption_registry)
+    return session_load_vars
 
 
 def apply_custom_hard_constraints(
@@ -268,11 +295,9 @@ def apply_custom_hard_constraints(
             for project in projects:
                 project_id = project["id"]
                 for role in ROLES:
-                    _add_constraint(
-                        model,
-                        vars_.x[(professor_id, project_id, role, session_id)] == 0,
-                        assumption,
-                    )
+                    v = vars_.x.get((professor_id, project_id, role, session_id))
+                    if v is not None:
+                        _add_constraint(model, v == 0, assumption)
 
         elif name == "forbid_professor_project":
             professor_id = _as_int(payload.get("professor_id"))
@@ -282,11 +307,9 @@ def apply_custom_hard_constraints(
 
             for role in _normalize_roles(payload.get("roles")):
                 for session_id in session_ids:
-                    _add_constraint(
-                        model,
-                        vars_.x[(professor_id, project_id, role, session_id)] == 0,
-                        assumption,
-                    )
+                    v = vars_.x.get((professor_id, project_id, role, session_id))
+                    if v is not None:
+                        _add_constraint(model, v == 0, assumption)
 
         elif name == "require_professor_role":
             professor_id = _as_int(payload.get("professor_id"))
@@ -298,17 +321,16 @@ def apply_custom_hard_constraints(
                 continue
 
             if session_id is not None and session_id in session_id_set:
-                _add_constraint(
-                    model,
-                    vars_.x[(professor_id, project_id, role, session_id)] == 1,
-                    assumption,
-                )
+                v = vars_.x.get((professor_id, project_id, role, session_id))
+                if v is not None:
+                    _add_constraint(model, v == 1, assumption)
             else:
-                _add_constraint(
-                    model,
-                    sum(vars_.x[(professor_id, project_id, role, sid)] for sid in session_ids) == 1,
-                    assumption,
-                )
+                role_vars = [
+                    v for sid in session_ids
+                    if (v := vars_.x.get((professor_id, project_id, role, sid))) is not None
+                ]
+                if role_vars:
+                    _add_constraint(model, sum(role_vars) == 1, assumption)
 
         elif name == "require_project_session":
             project_id = _as_int(payload.get("project_id"))

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional, TypedDict
+
+try:
+    from log_setup import logger as _logger
+except Exception:
+    _logger = logging.getLogger("orchestrator")
 
 
 NodeStatus = Literal["running", "success", "failed"]
@@ -80,6 +86,7 @@ def mark_node_start(state: SchedulingState, node: str) -> None:
     state["node_history"].append(
         NodeEvent(node=node, started_at=utc_now_iso(), ended_at=None, status="running", summary=None)
     )
+    _logger.info("[%s] ▶ node START — request_id=%s", node, state.get("request_id", "?"))
 
 
 def mark_node_end(state: SchedulingState, node: str, *, status: NodeStatus, summary: str | None) -> None:
@@ -93,9 +100,12 @@ def mark_node_end(state: SchedulingState, node: str, *, status: NodeStatus, summ
     if state["current_node"] == node:
         state["current_node"] = None
 
+    _logger.info("[%s] ■ node END   status=%s summary=%s", node, status, summary)
+
 
 def add_error(state: SchedulingState, message: str) -> None:
     state["errors"].append(message)
+    _logger.error("[orchestrator] ERROR — %s", message)
 
 
 def clone_state(state: SchedulingState) -> SchedulingState:

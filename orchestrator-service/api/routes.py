@@ -9,6 +9,12 @@ from graph.graph_builder import graph
 from graph.state import SchedulingState, init_state
 from store.workflow_store import store
 
+try:
+    from log_setup import logger
+except Exception:
+    import logging
+    logger = logging.getLogger("orchestrator")
+
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
@@ -18,7 +24,23 @@ def _run_workflow(request_id: str) -> None:
     if state is None:
         return
 
+    logger.info("WORKFLOW START — request_id=%s prompt=%r", request_id, (state.get("user_prompt") or "")[:120])
     result = graph.invoke(state)
+    logger.info(
+        "WORKFLOW END — request_id=%s final_status=%s errors=%s route=%s",
+        request_id,
+        result.get("final_status"),
+        result.get("errors"),
+        result.get("route"),
+    )
+    solver = result.get("solver_result") or {}
+    logger.info(
+        "SOLVER RESULT — status=%s solutions=%s assignments=%s failed_constraints=%s",
+        solver.get("status"),
+        len(solver.get("solutions") or []),
+        len(solver.get("assignments") or []),
+        solver.get("failed_constraints"),
+    )
     store.put(result)
 
 

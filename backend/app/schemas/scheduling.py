@@ -25,11 +25,31 @@ class SessionOut(SessionBase, ORMBase):
     id: int
 
 
+# ── Room ──────────────────────────────────────────────────────────────────────
+
+class RoomBase(BaseModel):
+    name: str
+
+
+class RoomCreate(RoomBase):
+    pass
+
+
+class RoomUpdate(BaseModel):
+    name: str | None = None
+
+
+class RoomOut(RoomBase, ORMBase):
+    id: int
+
+
+# ── Slot ──────────────────────────────────────────────────────────────────────
+
 class SlotBase(BaseModel):
     date: dt.date
     period: str
     slot_number: int
-    room: str
+    room_id: int
     session_id: int
 
 
@@ -41,13 +61,16 @@ class SlotUpdate(BaseModel):
     date: dt.date | None = None
     period: str | None = None
     slot_number: int | None = None
-    room: str | None = None
+    room_id: int | None = None
     session_id: int | None = None
 
 
 class SlotOut(SlotBase, ORMBase):
     id: int
+    room: str   # resolved from room_obj.name via the model property
 
+
+# ── Project ───────────────────────────────────────────────────────────────────
 
 class ProjectBase(BaseModel):
     title: str
@@ -70,6 +93,8 @@ class ProjectUpdate(BaseModel):
 class ProjectOut(ProjectBase, ORMBase):
     id: int
 
+
+# ── Assignment ────────────────────────────────────────────────────────────────
 
 class AssignmentBase(BaseModel):
     examiner_id: int
@@ -107,3 +132,17 @@ class ProjectImportReport(BaseModel):
     skipped_duplicates: int
     invalid_rows: int
     issues: list[ProjectImportIssue]
+
+
+# ── Slot generation ───────────────────────────────────────────────────────────
+
+class GenerateSlotsRequest(BaseModel):
+    start_date: dt.date
+    end_date: dt.date
+    room_id: int
+
+
+class GenerateSlotsResponse(BaseModel):
+    session_id: int
+    slots_created: int
+    days_covered: int

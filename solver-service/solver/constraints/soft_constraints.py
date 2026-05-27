@@ -19,7 +19,12 @@ class SoftTerms:
     custom_penalty: cp_model.LinearExpr
 
 
-def build_soft_terms(model: cp_model.CpModel, data: dict[str, Any], vars_: VariableBundle) -> SoftTerms:
+def build_soft_terms(
+    model: cp_model.CpModel,
+    data: dict[str, Any],
+    vars_: VariableBundle,
+    session_load_vars: dict[tuple[int, int], cp_model.IntVar],
+) -> SoftTerms:
     professors = data["professors"]
     projects = data["projects"]
     sessions = data["sessions"]
@@ -27,20 +32,12 @@ def build_soft_terms(model: cp_model.CpModel, data: dict[str, Any], vars_: Varia
     professor_ids = [p["id"] for p in professors]
     project_ids = [p["id"] for p in projects]
 
-    # Load variables per professor.
     max_total_assignments = len(projects) * len(ROLES)
     load_vars: dict[int, cp_model.IntVar] = {}
     for pid in professor_ids:
         load = model.NewIntVar(0, max_total_assignments, f"load_p{pid}")
-        model.Add(
-            load
-            == sum(
-                vars_.x[(pid, pr_id, role, session["id"])]
-                for pr_id in project_ids
-                for role in ROLES
-                for session in sessions
-            )
-        )
+        # Reuse session_load_vars computed by hard constraints — avoids recomputing 5M-term sums.
+        model.Add(load == sum(session_load_vars[(pid, s["id"])] for s in sessions))
         load_vars[pid] = load
 
     # Workload balancing with scaled absolute deviation from average.
@@ -75,21 +72,19 @@ def build_soft_terms(model: cp_model.CpModel, data: dict[str, Any], vars_: Varia
     expertise_penalty = sum(expertise_terms) if expertise_terms else 0
 
     # Same-day clustering: minimize number of active days by professor.
+    # Use session_load_vars instead of per-project x-var lists — reduces 5M dict lookups to ~11K.
     sessions_by_day: dict[str, list[int]] = defaultdict(list)
     for session in sessions:
         sessions_by_day[str(session["date"])].append(session["id"])
 
+    max_sessions_per_day = max((len(sids) for sids in sessions_by_day.values()), default=1)
+
     day_used_terms: list[cp_model.IntVar] = []
     for pid in professor_ids:
-        for day, session_ids in sessions_by_day.items():
+        for day, session_ids_for_day in sessions_by_day.items():
             used = model.NewBoolVar(f"day_used_p{pid}_{day}")
-            day_load = sum(
-                vars_.x[(pid, pr_id, role, sid)]
-                for pr_id in project_ids
-                for role in ROLES
-                for sid in session_ids
-            )
-            model.Add(day_load <= len(session_ids) * len(ROLES) * used)
+            day_load = sum(session_load_vars[(pid, sid)] for sid in session_ids_for_day)
+            model.Add(day_load <= max_sessions_per_day * used)
             model.Add(day_load >= used)
             day_used_terms.append(used)
 
@@ -165,13 +160,15 @@ def build_custom_soft_penalty(
                 continue
 
             if session_id is not None and session_id in session_id_set:
-                assigned = vars_.x[(professor_id, project_id, role, session_id)]
+                assigned = vars_.x.get((professor_id, project_id, role, session_id))
+                if assigned is None:
+                    continue
             else:
+                role_vars = [v for sid in session_ids if (v := vars_.x.get((professor_id, project_id, role, sid))) is not None]
+                if not role_vars:
+                    continue
                 assigned = model.NewBoolVar(f"soft_assigned_p{professor_id}_pr{project_id}_{role}")
-                model.Add(
-                    assigned
-                    == sum(vars_.x[(professor_id, project_id, role, sid)] for sid in session_ids)
-                )
+                model.Add(assigned == sum(role_vars))
 
             miss = model.NewBoolVar(f"soft_miss_p{professor_id}_pr{project_id}_{role}")
             model.Add(miss + assigned == 1)
@@ -187,9 +184,10 @@ def build_custom_soft_penalty(
             model.Add(
                 session_load
                 == sum(
-                    vars_.x[(professor_id, project_id, role, session_id)]
+                    v
                     for project_id in project_ids
                     for role in ROLES
+                    if (v := vars_.x.get((professor_id, project_id, role, session_id))) is not None
                 )
             )
             penalty_terms.append(weight * session_load)
@@ -201,15 +199,16 @@ def build_custom_soft_penalty(
             if professor_id not in professor_id_set or project_id not in project_id_set:
                 continue
 
-            assignment_count = model.NewIntVar(0, len(roles), f"soft_penalize_p{professor_id}_pr{project_id}")
-            model.Add(
-                assignment_count
-                == sum(
-                    vars_.x[(professor_id, project_id, role, sid)]
-                    for role in roles
-                    for sid in session_ids
-                )
-            )
+            penalize_vars = [
+                v
+                for role in roles
+                for sid in session_ids
+                if (v := vars_.x.get((professor_id, project_id, role, sid))) is not None
+            ]
+            if not penalize_vars:
+                continue
+            assignment_count = model.NewIntVar(0, len(penalize_vars), f"soft_penalize_p{professor_id}_pr{project_id}")
+            model.Add(assignment_count == sum(penalize_vars))
             penalty_terms.append(weight * assignment_count)
 
         elif name == "prefer_morning":
@@ -225,10 +224,11 @@ def build_custom_soft_penalty(
                 model.Add(
                     afternoon_count
                     == sum(
-                        vars_.x[(professor_id, project_id, role, session_id)]
+                        v
                         for professor_id in professor_ids
                         for project_id in project_ids
                         for role in ROLES
+                        if (v := vars_.x.get((professor_id, project_id, role, session_id))) is not None
                     )
                 )
                 penalty_terms.append(weight * afternoon_count)

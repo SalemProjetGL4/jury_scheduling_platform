@@ -9,6 +9,7 @@ from app.routers.crud import (
     filiere_router,
     professor_router,
     project_router,
+    room_router,
     session_router,
     slot_router,
     student_router,
@@ -41,6 +42,7 @@ app.include_router(domain_router)
 app.include_router(professor_router)
 app.include_router(student_router)
 app.include_router(session_router)
+app.include_router(room_router)
 app.include_router(project_router)
 app.include_router(slot_router)
 app.include_router(unavailability_router)

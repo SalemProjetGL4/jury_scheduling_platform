@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CheckCircle2, Circle, Loader2, XCircle } from 'lucide-react'
-import { scheduleWorkflow, pollUntilDone } from '../services/orchestratorApi'
+import { scheduleWorkflow, pollUntilDone, enrichSolverResult } from '../services/orchestratorApi'
 import { useWorkflow } from '../context/WorkflowContext'
 
 const WIZARD_STEPS = [
@@ -37,7 +37,7 @@ function nodeStatus(nodeName, nodeHistory, currentNode) {
 
 export default function Generation() {
   const navigate = useNavigate()
-  const { saveResult } = useWorkflow()
+  const { saveResult, clearResult } = useWorkflow()
 
   const [prompt, setPrompt] = useState('')
   const [phase, setPhase] = useState('idle') // idle | running | done | error
@@ -50,6 +50,7 @@ export default function Generation() {
     setError('')
     setPhase('running')
     setStatusPayload(null)
+    clearResult()   // wipe the previous result so Results page never shows stale data
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -63,9 +64,9 @@ export default function Generation() {
         controller.signal,
       )
 
-      saveResult(result)
+      saveResult(enrichSolverResult(result))
       setPhase('done')
-      setTimeout(() => navigate('/resultats'), 600)
+      setTimeout(() => { navigate('/resultats'); setPhase('idle') }, 600)
     } catch (err) {
       if (err.name === 'AbortError') return
       setError(err.message || 'Impossible de lancer la génération')
@@ -226,7 +227,7 @@ export default function Generation() {
           ) : (
             <button
               onClick={handleLaunch}
-              disabled={!prompt.trim() || phase === 'done'}
+              disabled={!prompt.trim() || phase === 'running'}
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold px-6 py-2 rounded-lg transition-colors"
             >
               {phase === 'running' && <Loader2 size={15} className="animate-spin" />}

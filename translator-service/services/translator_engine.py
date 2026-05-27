@@ -11,18 +11,28 @@ from services.llm_extractor import extract_constraints_via_llm
 from services.rule_utils import SUPPORTED_RULES
 from services.snapshot_builder import build_solver_payload, snapshot_stats
 
+try:
+    from log_setup import logger
+except Exception:
+    import logging
+    logger = logging.getLogger("translator")
+
 
 def translate_prompt(*, request_id: str, prompt: str, user_id: str | None) -> dict[str, Any]:
-    print("[translator-service] TRANSLATION REQUEST START")
-    print(json.dumps({"request_id": request_id, "user_id": user_id}, ensure_ascii=True))
-    print("[translator-service] USER PROMPT START")
-    print(prompt)
-    print("[translator-service] USER PROMPT END")
+    logger.info("TRANSLATE REQUEST — request_id=%s user_id=%s", request_id, user_id)
+    logger.debug("USER PROMPT — %r", prompt[:200])
 
     snapshot = build_db_snapshot()
-    print("[translator-service] DB SNAPSHOT STATS START")
-    print(json.dumps(snapshot_stats(snapshot), ensure_ascii=True, indent=2))
-    print("[translator-service] DB SNAPSHOT STATS END")
+    stats = snapshot_stats(snapshot)
+    logger.info(
+        "DB SNAPSHOT — professors=%d projects=%d slots=%d constraint_rules=%d (hard=%d soft=%d)",
+        stats["professors_count"],
+        stats["projects_count"],
+        stats["sessions_count"],
+        stats["constraint_rules_total"],
+        stats["constraint_rules_hard"],
+        stats["constraint_rules_soft"],
+    )
 
     payload = build_solver_payload(snapshot)
     recognized = recognized_from_prompt(prompt)
