@@ -217,9 +217,11 @@ def generate_slots(
         is_saturday = weekday == 5
 
         for slot_num in range(1, 5):
+            start_tm = dt.datetime.combine(current, dt.time(7 + slot_num, 0)) # 8:00 -> 11:00
+            end_tm = start_tm + timedelta(hours=1)
             db.add(models.Slot(
-                date=current,
-                period="morning",
+                start_time=start_tm,
+                end_time=end_tm,
                 slot_number=slot_num,
                 room_id=payload.room_id,
                 session_id=session.id,
@@ -228,10 +230,12 @@ def generate_slots(
 
         if not is_saturday:
             for slot_num in range(1, 5):
+                start_tm = dt.datetime.combine(current, dt.time(12 + slot_num, 0)) # 13:00 -> 16:00
+                end_tm = start_tm + timedelta(hours=1)
                 db.add(models.Slot(
-                    date=current,
-                    period="afternoon",
-                    slot_number=slot_num,
+                    start_time=start_tm,
+                    end_time=end_tm,
+                    slot_number=slot_num + 4, # 5 to 8
                     room_id=payload.room_id,
                     session_id=session.id,
                 ))

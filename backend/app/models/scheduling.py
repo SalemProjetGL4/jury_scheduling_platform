@@ -27,13 +27,10 @@ class Session(Base):
 
 class Slot(Base):
     __tablename__ = "slot"
-    __table_args__ = (
-        CheckConstraint("period IN ('morning', 'afternoon')", name="ck_slot_period"),
-    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    date: Mapped[dt.date] = mapped_column(Date, nullable=False)
-    period: Mapped[str] = mapped_column(String, nullable=False)
+    start_time: Mapped[dt.datetime] = mapped_column(nullable=False)
+    end_time: Mapped[dt.datetime] = mapped_column(nullable=False)
     slot_number: Mapped[int] = mapped_column(Integer, nullable=False)
     room_id: Mapped[int] = mapped_column(ForeignKey("room.id"), nullable=False)
     session_id: Mapped[int] = mapped_column(ForeignKey("session.id", ondelete="CASCADE"), nullable=False)

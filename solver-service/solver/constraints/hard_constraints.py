@@ -52,6 +52,21 @@ def apply_hard_constraints(
             assumption,
         )
 
+    # Each session holds at most 1 project.
+    for session in sessions:
+        session_id = session["id"]
+        assumption_cap = _new_assumption(
+            assumption_registry,
+            key="one_project_per_session",
+            reason="Each session slot can host at most one project defense",
+            details={"session_id": session_id},
+        )
+        _add_constraint(
+            model,
+            sum(vars_.y[(project["id"], session_id)] for project in projects) <= 1,
+            assumption_cap,
+        )
+
     # Role uniqueness and role/session linkage.
     # SUPERVISOR: only one variable exists per (project, session) — for the actual supervisor.
     # PRESIDENT/EXAMINER: all professor variables exist.

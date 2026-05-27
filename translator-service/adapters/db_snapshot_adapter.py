@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
@@ -11,6 +12,8 @@ from config import settings
 
 
 def _iso(value: Any) -> str | Any:
+    if isinstance(value, datetime.datetime):
+        return value.isoformat()
     if isinstance(value, date):
         return value.isoformat()
     return value
@@ -65,7 +68,7 @@ def build_db_snapshot() -> dict[str, Any]:
         slot_rows = conn.execute(
             text(
                 """
-                SELECT s.id, s.session_id, s.date, s.period, s.slot_number, r.name AS room
+                SELECT s.id, s.session_id, s.start_time, s.end_time, s.slot_number, r.name AS room
                 FROM slot s
                 JOIN room r ON r.id = s.room_id
                 ORDER BY s.id
@@ -108,8 +111,10 @@ def build_db_snapshot() -> dict[str, Any]:
         {
             "id": int(row["id"]),
             "session_id": int(row["session_id"]),
-            "date": _iso(row["date"]),
-            "period": str(row["period"]),
+            "date": _iso(row["start_time"].date()) if row["start_time"] else None,
+            "period": "morning" if row["start_time"] and row["start_time"].hour < 12 else "afternoon",
+            "start_time": _iso(row["start_time"]),
+            "end_time": _iso(row["end_time"]),
             "slot_number": int(row["slot_number"]),
             "room": str(row["room"]),
         }

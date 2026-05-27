@@ -46,8 +46,8 @@ class RoomOut(RoomBase, ORMBase):
 # ── Slot ──────────────────────────────────────────────────────────────────────
 
 class SlotBase(BaseModel):
-    date: dt.date
-    period: str
+    start_time: dt.datetime
+    end_time: dt.datetime
     slot_number: int
     room_id: int
     session_id: int
@@ -58,8 +58,8 @@ class SlotCreate(SlotBase):
 
 
 class SlotUpdate(BaseModel):
-    date: dt.date | None = None
-    period: str | None = None
+    start_time: dt.datetime | None = None
+    end_time: dt.datetime | None = None
     slot_number: int | None = None
     room_id: int | None = None
     session_id: int | None = None
