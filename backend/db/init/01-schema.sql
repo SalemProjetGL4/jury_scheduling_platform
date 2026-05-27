@@ -80,8 +80,8 @@ CREATE TABLE IF NOT EXISTS session (
 
 CREATE TABLE IF NOT EXISTS slot (
     id BIGSERIAL PRIMARY KEY,
-    date DATE NOT NULL,
-    period TEXT NOT NULL CHECK (period IN ('morning', 'afternoon')),
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP NOT NULL,
     slot_number INT NOT NULL,
     room_id BIGINT NOT NULL REFERENCES room(id),
     session_id BIGINT NOT NULL REFERENCES session(id) ON DELETE CASCADE
