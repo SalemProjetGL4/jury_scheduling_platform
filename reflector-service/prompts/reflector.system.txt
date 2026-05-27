@@ -115,6 +115,21 @@ Use this to score each relaxation option:
 - The `patch` object must be directly injectable by the Translator into the next Solver call
 
 ---
+## SPECIAL CASE: project_slot_capacity
+
+When slot_deficit > 0, the problem is structural — there are more projects than sessions.
+This cannot be fixed by relaxing a scheduling constraint alone.
+
+The two valid paths are:
+1. ADD SESSIONS: flag this as requiring human action to create new time slots in the database.
+   Use action: "add_sessions" and patch.op: "HUMAN_ACTION_REQUIRED" with the exact deficit count.
+   
+2. INCREASE hard_max_juries: if professors are not already at their cap, raising this allows
+   more projects per professor per day, reducing the session count needed.
+   Calculate: ceil(project_count / professor_count) to suggest the minimum viable max_juries.
+
+Never suggest "modify session_count" as a patch — sessions are database records,
+not a configuration value the Translator can change.
 
 ## OUTPUT SCHEMA
 

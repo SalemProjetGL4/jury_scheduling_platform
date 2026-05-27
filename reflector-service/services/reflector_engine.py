@@ -67,6 +67,285 @@ def reflect_solver_output(request: ReflectRequest) -> dict[str, Any]:
     return result
 
 
+def build_reflector_context(payload: dict[str, Any]) -> dict[str, Any]:
+    solver_result = payload.get("solver_result", {})
+    solver_payload = payload.get("solver_payload", {})
+    status = solver_result.get("status", "")
+    failed_constraints = solver_result.get("failed_constraints", [])
+
+    # BUILD NAME LOOKUP from db_snapshot if available (has real names)
+    db_snapshot = payload.get("db_snapshot", {})
+    prof_names = {
+        p["id"]: p.get("name", f"Professor {p['id']}")
+        for p in db_snapshot.get("professors", [])
+    }
+    proj_titles = {
+        p["id"]: p.get("title", f"Project {p['id']}")
+        for p in db_snapshot.get("projects", [])
+    }
+
+    context: dict[str, Any] = {
+        "request_id": payload.get("request_id"),
+        "solver_result": solver_result,
+        "strategic_intent": payload.get("strategic_intent", {}),
+        "iteration_state": payload.get("iteration_state", {}),
+    }
+
+    if status != "INFEASIBLE":
+        # COMPROMISED: only send violated soft constraints, no grid
+        solutions = solver_result.get("solutions", [])
+        context["solver_result"]["solutions"] = [
+            {
+                "solution_index": s["solution_index"],
+                "status": s["status"],
+                "objective_value": s.get("objective_value", 0),
+                "unsatisfied_soft_constraints": s.get("unsatisfied_soft_constraints", []),
+            }
+            for s in solutions
+        ]
+
+        # Enrich soft constraint violations with real names
+        for solution in context["solver_result"]["solutions"]:
+            for violation in solution.get("unsatisfied_soft_constraints", []):
+                p = violation.get("payload", {})
+                if "professor_id" in p:
+                    violation["professor_name"] = prof_names.get(
+                        p["professor_id"], f"Professor {p['professor_id']}"
+                    )
+                if "project_id" in p:
+                    violation["project_title"] = proj_titles.get(
+                        p["project_id"], f"Project {p['project_id']}"
+                    )
+        return context
+
+    # --- INFEASIBLE: detect bottleneck type and build targeted context ---
+    professors = {p["id"]: p for p in solver_payload.get("professors", [])}
+    projects = solver_payload.get("projects", [])
+    sessions = solver_payload.get("sessions", [])
+    unavailabilities = solver_payload.get("unavailabilities", [])
+    conflicts = solver_payload.get("conflicts", [])
+
+    # Detect which constraint types are failing
+    failed_types = {fc["constraint"] for fc in failed_constraints}
+
+    # --- CASE 1: Slot capacity (not enough sessions for all projects) ---
+    if "project_slot_capacity" in failed_types:
+        from collections import Counter
+
+        supervisor_counts = Counter(p["supervisor_id"] for p in projects)
+        unique_dates = {s["date"] for s in sessions}
+
+        context["capacity_summary"] = {
+            "professor_count": len(professors),
+            "project_count": len(projects),
+            "session_count": len(sessions),
+            "unique_days": len(unique_dates),
+            "morning_slots": sum(1 for s in sessions if s["period"] == "morning"),
+            "afternoon_slots": sum(1 for s in sessions if s["period"] == "afternoon"),
+            "slot_deficit": len(projects) - len(sessions),
+            "hard_max_juries": solver_payload.get("constraints", {}).get("hard_max_juries", 8),
+            "overloaded_supervisors": [
+                {
+                    "professor_id": pid,
+                    "professor_name": prof_names.get(pid, f"Professor {pid}"),
+                    "project_count": count,
+                }
+                for pid, count in supervisor_counts.most_common(5)
+                if count > 3
+            ],
+        }
+
+    # --- CASE 2: Professor unavailability blocking a project ---
+    if "professor_unavailable" in failed_types or any(
+        "unavailab" in fc["constraint"].lower() for fc in failed_constraints
+    ):
+        # Find which professors are unavailable and which projects they supervise
+        unavailable_prof_ids = {u["professor_id"] for u in unavailabilities}
+
+        blocked_projects = [
+            {
+                "project_id": p["id"],
+                "project_title": proj_titles.get(p["id"], f"Project {p['id']}"),
+                "supervisor_id": p["supervisor_id"],
+                "supervisor_name": prof_names.get(p["supervisor_id"], f"Professor {p['supervisor_id']}"),
+            }
+            for p in projects
+            if p["supervisor_id"] in unavailable_prof_ids
+        ]
+
+        context["unavailability_context"] = {
+            "unavailabilities": [
+                {
+                    "professor_id": u["professor_id"],
+                    "professor_name": prof_names.get(u["professor_id"], f"Professor {u['professor_id']}"),
+                    "date": u["date"],
+                    "period": u["period"],
+                }
+                for u in unavailabilities
+            ],
+            "blocked_projects": blocked_projects,
+        }
+
+    # --- CASE 3: Conflict of interest between professors ---
+    if "conflict_of_interest" in failed_types or any(
+        "conflict" in fc["constraint"].lower() for fc in failed_constraints
+    ):
+        # Enrich conflicts with real names
+        enriched_conflicts = [
+            {
+                "professor_a_id": c["professor_a"],
+                "professor_a_name": prof_names.get(c["professor_a"], f"Professor {c['professor_a']}"),
+                "professor_b_id": c["professor_b"],
+                "professor_b_name": prof_names.get(c["professor_b"], f"Professor {c['professor_b']}"),
+            }
+            for c in conflicts
+        ]
+
+        # Find projects where both conflicting professors are supervisors
+        # (i.e. they'd inevitably share a jury)
+        conflict_pairs = {
+            (min(c["professor_a"], c["professor_b"]), max(c["professor_a"], c["professor_b"]))
+            for c in conflicts
+        }
+
+        # Find projects supervised by professors involved in conflicts
+        conflicted_prof_ids = {pid for pair in conflict_pairs for pid in pair}
+        affected_projects = [
+            {
+                "project_id": p["id"],
+                "project_title": proj_titles.get(p["id"], f"Project {p['id']}"),
+                "supervisor_id": p["supervisor_id"],
+                "supervisor_name": prof_names.get(p["supervisor_id"], f"Professor {p['supervisor_id']}"),
+            }
+            for p in projects
+            if p["supervisor_id"] in conflicted_prof_ids
+        ]
+
+        context["conflict_context"] = {
+            "conflict_pairs": enriched_conflicts,
+            "affected_projects": affected_projects[:10],
+            "total_conflict_pairs": len(enriched_conflicts),
+        }
+
+    # --- CASE 4: Supervisor binding impossible ---
+    if "supervisor_binding" in failed_types:
+        binding_conflicts = []
+        for p in projects:
+            sup_id = p["supervisor_id"]
+            # Check if supervisor has any unavailability at all
+            sup_unavailable = [u for u in unavailabilities if u["professor_id"] == sup_id]
+            if sup_unavailable:
+                binding_conflicts.append(
+                    {
+                        "project_id": p["id"],
+                        "project_title": proj_titles.get(p["id"], f"Project {p['id']}"),
+                        "supervisor_id": sup_id,
+                        "supervisor_name": prof_names.get(sup_id, f"Professor {sup_id}"),
+                        "supervisor_unavailable_on": [
+                            {"date": u["date"], "period": u["period"]}
+                            for u in sup_unavailable
+                        ],
+                    }
+                )
+
+        context["supervisor_binding_context"] = {
+            "binding_conflicts": binding_conflicts[:10],
+        }
+
+    # --- CASE 5: Not enough fully available professors to fill each jury role ---
+    if "role_uniqueness" in failed_types or "each_role_filled_once" in failed_types:
+        unavailable_prof_ids = {u["professor_id"] for u in unavailabilities}
+        conflicted_prof_ids = set()
+        for c in conflicts:
+            conflicted_prof_ids.add(c["professor_a"])
+            conflicted_prof_ids.add(c["professor_b"])
+
+        restricted_professors = unavailable_prof_ids | conflicted_prof_ids
+        available_count = len(professors) - len(restricted_professors)
+
+        context["role_uniqueness_context"] = {
+            "total_professors": len(professors),
+            "unavailable_professors": len(unavailable_prof_ids),
+            "conflicted_professors": len(conflicted_prof_ids),
+            "effectively_available": available_count,
+            "minimum_needed_per_jury": 3,
+            "description": (
+                f"Only {available_count} professors are fully available. "
+                f"Each jury needs 3 distinct professors. "
+                f"Some projects may have an insufficient pool."
+            ),
+        }
+
+    # --- CASE 5: One professor is required in multiple simultaneous projects ---
+    if "no_simultaneous_slots" in failed_types:
+        from collections import Counter
+
+        supervisor_counts = Counter(p["supervisor_id"] for p in projects)
+
+        context["simultaneous_slots_context"] = {
+            "description": "A professor is required in two projects simultaneously.",
+            "high_risk_professors": [
+                {
+                    "professor_id": pid,
+                    "professor_name": prof_names.get(pid, f"Professor {pid}"),
+                    "supervised_project_count": count,
+                    "projects": [
+                        {
+                            "project_id": p["id"],
+                            "project_title": proj_titles.get(p["id"], f"Project {p['id']}")
+                        }
+                        for p in projects
+                        if p["supervisor_id"] == pid
+                    ],
+                }
+                for pid, count in supervisor_counts.most_common(5)
+                if count >= 2
+            ],
+        }
+
+    # --- CASE 6: Half-day exclusivity bottleneck ---
+    if "half_day_exclusivity" in failed_types:
+        from collections import defaultdict, Counter
+
+        # Group sessions by date and period
+        sessions_by_date_period = defaultdict(list)
+        for s in sessions:
+            sessions_by_date_period[(s["date"], s["period"])].append(s["id"])
+
+        # Find professors who supervise many projects - they're most likely
+        # to hit the half-day constraint
+        supervisor_counts = Counter(p["supervisor_id"] for p in projects)
+
+        high_risk = []
+        for pid, count in supervisor_counts.most_common(10):
+            if count >= 2:
+                supervised = [
+                    {
+                        "project_id": p["id"],
+                        "project_title": proj_titles.get(p["id"], f"Project {p['id']}")
+                    }
+                    for p in projects if p["supervisor_id"] == pid
+                ]
+                high_risk.append({
+                    "professor_id": pid,
+                    "professor_name": prof_names.get(pid, f"Professor {pid}"),
+                    "supervised_project_count": count,
+                    "supervised_projects": supervised,
+                    "risk": "HIGH" if count >= 4 else "MEDIUM"
+                })
+
+        context["half_day_context"] = {
+            "description": (
+                "A professor cannot work both morning and afternoon on the same day. "
+                "Professors supervising many projects are most at risk."
+            ),
+            "unique_days": len(set(s["date"] for s in sessions)),
+            "high_risk_professors": high_risk,
+        }
+
+    return context
+
+
 def _apply_llm_reflection(payload: dict[str, Any]) -> ReflectorOutput | None:
     system_prompt, _ = prompt_registry.get_with_hash("reflector.system.txt")
     schema_prompt, _ = prompt_registry.get_with_hash("reflector.schema.txt")
@@ -77,7 +356,8 @@ def _apply_llm_reflection(payload: dict[str, Any]) -> ReflectorOutput | None:
     # Tag the system prompt so we can verify which prompt was actually sent
     tagged_system = f"REFLECTOR_V3\n{system_prompt}\n\nReturn strict JSON only.\n{schema_prompt}"
 
-    user_message = json.dumps(payload, ensure_ascii=True)
+    reflector_context = build_reflector_context(payload)
+    user_message = json.dumps(reflector_context, ensure_ascii=True)
 
     # Log what we're about to send
     logger.info("LLM adapter: %s", adapter_name)
