@@ -785,13 +785,13 @@ export default function Calendrier() {
             </div>
 
             {/* Morning row */}
-            <div style={{ display: 'grid', gridTemplateColumns: `140px repeat(${dayKeys.length}, minmax(160px, 1fr))`, gap: '8px', marginBottom: '8px' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', padding: '12px 8px', background: '#eff6ff', borderRadius: '6px', border: '0.5px solid #bfdbfe' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: `140px repeat(${dayKeys.length}, minmax(160px, 1fr))`, gap: '8px', marginBottom: '8px', alignItems: 'stretch' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', height: '100%', padding: '12px 8px', background: '#eff6ff', borderRadius: '6px', border: '0.5px solid #bfdbfe' }}>
                 <p style={{ margin: 0, fontSize: '11px', fontWeight: 600, color: '#1e40af' }}>☀ Matin</p>
                 <p style={{ margin: 0, fontSize: '10px', color: '#3b82f6', marginTop: '2px' }}>08:00–12:00</p>
               </div>
               {dayKeys.map(day => (
-                <div key={day} style={{ background: '#f8fafc', borderRadius: '6px', border: '0.5px solid #e2e8f0', padding: '8px', minHeight: '80px' }}>
+                <div key={day} style={{ background: '#f8fafc', borderRadius: '6px', border: '0.5px solid #e2e8f0', padding: '8px', height: '100%', display: 'flex', flexDirection: 'column' }}>
                   {(groupedCalendar[day]?.morning || []).map(slot => (
                     <SlotGroup key={`${slot.start}-${slot.end}`} slot={slot} />
                   ))}
@@ -800,13 +800,13 @@ export default function Calendrier() {
             </div>
 
             {/* Afternoon row */}
-            <div style={{ display: 'grid', gridTemplateColumns: `140px repeat(${dayKeys.length}, minmax(160px, 1fr))`, gap: '8px' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', padding: '12px 8px', background: '#faf5ff', borderRadius: '6px', border: '0.5px solid #e9d5ff' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: `140px repeat(${dayKeys.length}, minmax(160px, 1fr))`, gap: '8px', alignItems: 'stretch' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', height: '100%', padding: '12px 8px', background: '#faf5ff', borderRadius: '6px', border: '0.5px solid #e9d5ff' }}>
                 <p style={{ margin: 0, fontSize: '11px', fontWeight: 600, color: '#6b21a8' }}>🌤 Après-midi</p>
                 <p style={{ margin: 0, fontSize: '10px', color: '#7c3aed', marginTop: '2px' }}>13:00–17:00</p>
               </div>
               {dayKeys.map(day => (
-                <div key={day} style={{ background: '#f8fafc', borderRadius: '6px', border: '0.5px solid #e2e8f0', padding: '8px', minHeight: '80px' }}>
+                <div key={day} style={{ background: '#f8fafc', borderRadius: '6px', border: '0.5px solid #e2e8f0', padding: '8px', height: '100%', display: 'flex', flexDirection: 'column' }}>
                   {(groupedCalendar[day]?.afternoon || []).map(slot => (
                     <SlotGroup key={`${slot.start}-${slot.end}`} slot={slot} />
                   ))}
