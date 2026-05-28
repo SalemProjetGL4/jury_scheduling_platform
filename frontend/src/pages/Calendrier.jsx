@@ -19,6 +19,12 @@ const SLOT_TIMES = {
   1: ['08:00', '09:00'], 2: ['09:00', '10:00'], 3: ['10:00', '11:00'], 4: ['11:00', '12:00'],
   5: ['13:00', '14:00'], 6: ['14:00', '15:00'], 7: ['15:00', '16:00'], 8: ['16:00', '17:00'],
 }
+
+const FILIERE_CONFIG = {
+  1:    { name: 'GL5',   color: '#2563eb', light: '#eff6ff', border: '#bfdbfe', text: '#1e40af' },
+  2:    { name: 'RT5',   color: '#059669', light: '#ecfdf5', border: '#6ee7b7', text: '#065f46' },
+  null: { name: 'Autre', color: '#94a3b8', light: '#f8fafc', border: '#e2e8f0', text: '#475569' },
+}
 function slotToTime(slotNumber) {
   return SLOT_TIMES[slotNumber] ?? ['--:--', '--:--']
 }
@@ -37,7 +43,9 @@ function SlotGroup({ slot }) {
   const [open, setOpen] = useState(false)
   const count = slot.events.length
   const first = slot.events[0]
-  const accentColor = first?.period === 'afternoon' ? '#7c3aed' : '#2563eb'
+  const filiereId  = first?.filiereId ?? null
+  const filiereCfg = FILIERE_CONFIG[filiereId] ?? FILIERE_CONFIG[null]
+  const accentColor = filiereCfg.color
 
   return (
     <>
@@ -73,16 +81,27 @@ function SlotGroup({ slot }) {
             <p style={{ margin: 0, fontSize: '11px', color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '2px' }}>
               {first.projectTitle}
             </p>
-            <span style={{ fontSize: '10px', color: '#94a3b8', marginTop: '3px', display: 'block' }}>{first.room}</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+              <span style={{ fontSize: '10px', padding: '1px 7px', borderRadius: '99px', background: filiereCfg.light, color: filiereCfg.text, border: `0.5px solid ${filiereCfg.border}`, display: 'inline-block' }}>
+                {filiereCfg.name}
+              </span>
+              <span style={{ fontSize: '10px', color: '#94a3b8' }}>{first.room}</span>
+            </div>
           </>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '2px' }}>
-            {slot.events.map((e, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: '11px', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>{e.studentName}</span>
-                <span style={{ fontSize: '10px', color: '#94a3b8' }}>{e.room}</span>
-              </div>
-            ))}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginTop: '2px' }}>
+            {slot.events.map((e, i) => {
+              const eCfg = FILIERE_CONFIG[e.filiereId] ?? FILIERE_CONFIG[null]
+              return (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '11px', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '55%' }}>{e.studentName}</span>
+                  <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '99px', background: eCfg.light, color: eCfg.text, border: `0.5px solid ${eCfg.border}` }}>{eCfg.name}</span>
+                    <span style={{ fontSize: '10px', color: '#94a3b8' }}>{e.room}</span>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
@@ -107,11 +126,16 @@ function SlotGroup({ slot }) {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {slot.events.map((e, i) => (
+              {slot.events.map((e, i) => {
+                const mCfg = FILIERE_CONFIG[e.filiereId] ?? FILIERE_CONFIG[null]
+                return (
                 <div key={i} style={{ borderTop: i === 0 ? 'none' : '0.5px solid #e2e8f0', paddingTop: i === 0 ? 0 : '16px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                     <p style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#0f172a' }}>{e.studentName}</p>
-                    <span style={{ fontSize: '11px', background: '#f1f5f9', color: '#475569', padding: '2px 8px', borderRadius: '99px' }}>{e.room}</span>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <span style={{ fontSize: '10px', padding: '1px 7px', borderRadius: '99px', background: mCfg.light, color: mCfg.text, border: `0.5px solid ${mCfg.border}` }}>{mCfg.name}</span>
+                      <span style={{ fontSize: '11px', background: '#f1f5f9', color: '#475569', padding: '2px 8px', borderRadius: '99px' }}>{e.room}</span>
+                    </div>
                   </div>
                   <p style={{ margin: 0, fontSize: '12px', color: '#64748b', marginBottom: '10px' }}>{e.projectTitle}</p>
                   {[
@@ -125,7 +149,7 @@ function SlotGroup({ slot }) {
                     </div>
                   ))}
                 </div>
-              ))}
+              )})}
             </div>
           </div>
         </div>
@@ -350,12 +374,14 @@ function buildCalendarFromSolution(rawAssignments, {
     const supervisorName = supervisorProf?.name ?? (a.roles?.supervisor ? `Prof. #${a.roles.supervisor}` : '—')
     const presidentName  = presidentProf?.name  ?? (a.roles?.president  ? `Prof. #${a.roles.president}`  : '—')
     const examinerName   = examinerProf?.name   ?? (a.roles?.examiner   ? `Prof. #${a.roles.examiner}`   : '—')
+    const filiereId      = student?.filiere_id ?? null
 
     return {
       id: a.project_id ?? i,
       day: a.date, period: a.period,
       start, end, room,
       studentName, projectTitle, supervisorName, presidentName, examinerName,
+      filiereId,
       prof: studentName, title: projectTitle,
       juryInfo: `Enc: ${supervisorName} · Prés: ${presidentName} · Exam: ${examinerName}`,
       salle: a.period,
@@ -405,19 +431,22 @@ export default function Calendrier() {
   const [students, setStudents]             = useState([])
   const [error, setError]                   = useState('')
   const [selectedRoom, setSelectedRoom]     = useState('all')
+  const [filieres, setFilieres]             = useState([])
+  const [selectedFiliere, setSelectedFiliere] = useState('all')
 
   useEffect(() => {
     let active = true
 
     async function loadCalendar() {
       try {
-        const [sessionsData, slotsData, assignmentsData, professorsData, projectsData, studentsData] = await Promise.all([
+        const [sessionsData, slotsData, assignmentsData, professorsData, projectsData, studentsData, filieresData] = await Promise.all([
           apiRequest('/sessions?limit=200'),
           apiRequest('/slots?limit=200'),
           apiRequest('/assignments?limit=200'),
           apiRequest('/professors?limit=200'),
           apiRequest('/projects?limit=200'),
           apiRequest('/students?limit=200'),
+          apiRequest('/filieres'),
         ])
 
         if (!active) return
@@ -428,6 +457,7 @@ export default function Calendrier() {
         const safeProfessors  = Array.isArray(professorsData)  ? professorsData  : []
         const safeProjects    = Array.isArray(projectsData)    ? projectsData    : []
         const safeStudents    = Array.isArray(studentsData)    ? studentsData    : []
+        const safeFilieres    = Array.isArray(filieresData?.items ?? filieresData) ? (filieresData?.items ?? filieresData) : []
 
         const sortedSessions = safeSessions
           .slice()
@@ -439,6 +469,7 @@ export default function Calendrier() {
         setProfessors(safeProfessors)
         setProjects(safeProjects)
         setStudents(safeStudents)
+        setFilieres(safeFilieres)
 
         if (sortedSessions.length > 0) {
           const latestSession = sortedSessions[sortedSessions.length - 1]
@@ -549,9 +580,9 @@ export default function Calendrier() {
     Object.entries(calendarData).forEach(([date, periods]) => {
       result[date] = {}
       Object.entries(periods).forEach(([period, evs]) => {
-        const filtered = selectedRoom === 'all'
-          ? evs
-          : evs.filter(e => e.room === selectedRoom)
+        const filtered = evs
+          .filter(e => selectedFiliere === 'all' || String(e.filiereId) === String(selectedFiliere))
+          .filter(e => selectedRoom === 'all' || e.room === selectedRoom)
 
         const bySlot = {}
         filtered.forEach(e => {
@@ -566,7 +597,7 @@ export default function Calendrier() {
       })
     })
     return result
-  }, [calendarData, selectedRoom])
+  }, [calendarData, selectedRoom, selectedFiliere])
 
   const dayKeys = visibleDays.map(d => d.key)
   const totalAssignments = selectedSolution?.rawAssignments?.length
@@ -671,6 +702,34 @@ export default function Calendrier() {
             ))}
           </div>
         )}
+
+        {/* Filière filter pills */}
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          <span style={{ fontSize: '12px', color: '#94a3b8', marginRight: '4px' }}>Filière :</span>
+          {['all', ...Object.keys(FILIERE_CONFIG).filter(k => k !== 'null')].map(key => {
+            const cfg = key === 'all' ? null : FILIERE_CONFIG[Number(key)]
+            const isActive = selectedFiliere === key
+            return (
+              <button
+                key={key}
+                onClick={() => setSelectedFiliere(key)}
+                style={{
+                  fontSize: '12px',
+                  padding: '4px 12px',
+                  borderRadius: '99px',
+                  border: `0.5px solid ${isActive ? (cfg?.color ?? '#475569') : '#e2e8f0'}`,
+                  background: isActive ? (cfg?.light ?? '#f8fafc') : '#fff',
+                  color: isActive ? (cfg?.text ?? '#475569') : '#64748b',
+                  cursor: 'pointer',
+                  fontWeight: isActive ? 600 : 400,
+                  transition: 'all 0.15s',
+                }}
+              >
+                {key === 'all' ? 'Toutes' : cfg?.name}
+              </button>
+            )
+          })}
+        </div>
 
         <select className="text-xs border border-gray-300 rounded-md px-2 py-1.5 bg-white">
           <option>Tous les jurys</option>
