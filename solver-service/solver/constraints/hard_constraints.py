@@ -158,13 +158,17 @@ def apply_hard_constraints(
             session_load = model.NewIntVar(0, len(role_terms), f"sl_{pid}_{session_id}")
             model.Add(session_load == sum(role_terms))
 
-            assumption = _new_assumption(
-                assumption_registry,
-                key="one_role_per_professor_session",
-                reason="Professor can hold at most one role per session",
-                details={"professor_id": pid, "session_id": session_id},
-            )
-            _add_constraint(model, session_load <= 1, assumption)
+            # Enforce the limit unconditionally so the model always respects the rule.
+            model.Add(session_load <= 1)
+
+            # Keep an assumption-tagged copy for conflict reporting when enabled.
+            if assumption_registry is not None:
+                assumption = assumption_registry.register(
+                    key="one_role_per_professor_session",
+                    reason="Professor can hold at most one role per session",
+                    details={"professor_id": pid, "session_id": session_id},
+                )
+                model.Add(session_load <= 1).OnlyEnforceIf(assumption)
             session_load_vars[(pid, session_id)] = session_load
     # session_load_vars is returned so soft constraints can reuse it without recomputing.
 
@@ -213,6 +217,45 @@ def apply_hard_constraints(
         )
         _add_constraint(model, total_load <= max_juries_per_professor + mandatory_supervisor_load, assumption)
 
+    # No overlapping assignments across sessions that share the same timeslot.
+    sessions_by_timeslot: dict[tuple[str, ...], list[int]] = defaultdict(list)
+    timeslot_labels: dict[tuple[str, ...], str] = {}
+    for session in sessions:
+        date = str(session.get("date", ""))
+        start_time = session.get("start_time")
+        end_time = session.get("end_time")
+        slot_number = session.get("slot_number")
+
+        if start_time and end_time:
+            key = (date, str(start_time), str(end_time))
+            label = f"{date} {start_time}-{end_time}"
+        elif slot_number is not None and date:
+            key = (date, f"slot_{slot_number}")
+            label = f"{date} slot_{slot_number}"
+        else:
+            continue
+
+        sessions_by_timeslot[key].append(session["id"])
+        timeslot_labels.setdefault(key, label)
+
+    for pid in professor_ids:
+        for key, slot_session_ids in sessions_by_timeslot.items():
+            if len(slot_session_ids) < 2:
+                continue
+            slot_sum = sum(session_load_vars[(pid, sid)] for sid in slot_session_ids)
+            model.Add(slot_sum <= 1)
+            if assumption_registry is not None:
+                assumption = assumption_registry.register(
+                    key="no_overlapping_sessions",
+                    reason="Professor cannot serve in multiple rooms at the same time",
+                    details={
+                        "professor_id": pid,
+                        "timeslot": timeslot_labels.get(key, ""),
+                        "session_ids": slot_session_ids,
+                    },
+                )
+                model.Add(slot_sum <= 1).OnlyEnforceIf(assumption)
+
     # Half-day exclusivity per professor/day.
     # (supervisor_fixed already enforced above via role_session_link for SUPERVISOR role)
     sessions_by_day_period: dict[tuple[str, str], list[int]] = defaultdict(list)
@@ -225,28 +268,28 @@ def apply_hard_constraints(
 
     for pid in professor_ids:
         for day in sorted(day_values):
-            morning_b = model.NewBoolVar(f"morning_p{pid}_{day}")
-            afternoon_b = model.NewBoolVar(f"afternoon_p{pid}_{day}")
-
-            assumption = _new_assumption(
-                assumption_registry,
-                key="half_day_exclusivity",
-                reason="Professor cannot serve both morning and afternoon on the same day",
-                details={"professor_id": pid, "date": day},
-            )
-
             morning_sessions = sessions_by_day_period.get((day, "morning"), [])
             afternoon_sessions = sessions_by_day_period.get((day, "afternoon"), [])
 
-            # Reuse session_load_vars (already computed above) — avoids re-summing all role terms.
-            morning_sum = sum(session_load_vars[(pid, sid)] for sid in morning_sessions) if morning_sessions else 0
-            afternoon_sum = sum(session_load_vars[(pid, sid)] for sid in afternoon_sessions) if afternoon_sessions else 0
+            if not morning_sessions or not afternoon_sessions:
+                continue  # Only one period exists this day, no conflict possible
 
-            _add_constraint(model, morning_sum <= max(1, len(morning_sessions)) * morning_b, assumption)
-            _add_constraint(model, afternoon_sum <= max(1, len(afternoon_sessions)) * afternoon_b, assumption)
-            _add_constraint(model, morning_sum >= morning_b, assumption)
-            _add_constraint(model, afternoon_sum >= afternoon_b, assumption)
-            _add_constraint(model, morning_b + afternoon_b <= 1, assumption)
+            morning_sum = sum(session_load_vars[(pid, sid)] for sid in morning_sessions)
+            afternoon_sum = sum(session_load_vars[(pid, sid)] for sid in afternoon_sessions)
+
+            has_morning = model.NewBoolVar(f"has_morning_p{pid}_{day}")
+            has_afternoon = model.NewBoolVar(f"has_afternoon_p{pid}_{day}")
+
+            # has_morning = 1 iff morning_sum >= 1
+            model.Add(morning_sum >= 1).OnlyEnforceIf(has_morning)
+            model.Add(morning_sum == 0).OnlyEnforceIf(has_morning.Not())
+
+            # has_afternoon = 1 iff afternoon_sum >= 1
+            model.Add(afternoon_sum >= 1).OnlyEnforceIf(has_afternoon)
+            model.Add(afternoon_sum == 0).OnlyEnforceIf(has_afternoon.Not())
+
+            # Cannot be in both periods on the same day.
+            model.Add(has_morning + has_afternoon <= 1)
 
     # Unavailability exclusions.
     unavailability_by_prof: dict[int, list[tuple[str, str]]] = defaultdict(list)
