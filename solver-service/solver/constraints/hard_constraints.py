@@ -168,6 +168,32 @@ def apply_hard_constraints(
             session_load_vars[(pid, session_id)] = session_load
     # session_load_vars is returned so soft constraints can reuse it without recomputing.
 
+    # A professor cannot hold more than one role on the same project jury.
+    for professor in professors:
+        pid = professor["id"]
+        for project in projects:
+            project_id = project["id"]
+            role_terms = []
+            for role in NON_SUPERVISOR_ROLES:
+                for session in sessions:
+                    session_id = session["id"]
+                    if (pid, project_id, role, session_id) in vars_.x:
+                        role_terms.append(vars_.x[(pid, project_id, role, session_id)])
+            # Also include supervisor role if this professor supervises this project
+            for session in sessions:
+                session_id = session["id"]
+                if (pid, project_id, "SUPERVISOR", session_id) in vars_.x:
+                    role_terms.append(vars_.x[(pid, project_id, "SUPERVISOR", session_id)])
+
+            if len(role_terms) > 1:
+                assumption = _new_assumption(
+                    assumption_registry,
+                    key="role_uniqueness_per_jury",
+                    reason="A professor cannot hold more than one role on the same jury",
+                    details={"professor_id": pid, "project_id": project_id},
+                )
+                _add_constraint(model, sum(role_terms) <= 1, assumption)
+
     # Max juries cap applies only to voluntary (PRESIDENT/EXAMINER) assignments.
     # Supervisor-role assignments are mandatory — a professor must attend every project they supervise,
     # so those do not count against their voluntary jury quota.
