@@ -48,7 +48,7 @@ class Project(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
     domain_id: Mapped[int] = mapped_column(ForeignKey("domain.id"), nullable=False)
-    supervisor_id: Mapped[int] = mapped_column(ForeignKey("professor.id"), nullable=False)
+    supervisor_id: Mapped[int] = mapped_column(ForeignKey("professor.id", ondelete="RESTRICT"), nullable=False)
     student_id: Mapped[int] = mapped_column(ForeignKey("student.id"), nullable=False)
 
 
@@ -56,7 +56,7 @@ class Assignment(Base):
     __tablename__ = "assignment"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    examiner_id: Mapped[int] = mapped_column(ForeignKey("professor.id"), nullable=False)
+    examiner_id: Mapped[int] = mapped_column(ForeignKey("professor.id", ondelete="RESTRICT"), nullable=False)
     project_id: Mapped[int] = mapped_column(ForeignKey("project.id"), nullable=False)
-    president_id: Mapped[int] = mapped_column(ForeignKey("professor.id"), nullable=False)
+    president_id: Mapped[int] = mapped_column(ForeignKey("professor.id", ondelete="RESTRICT"), nullable=False)
     slot_id: Mapped[int] = mapped_column(ForeignKey("slot.id", ondelete="CASCADE"), nullable=False)

@@ -38,6 +38,9 @@ class SessionPayload(BaseModel):
     id: int
     date: date | str
     period: Literal["morning", "afternoon"]
+    slot_number: int | None = None
+    start_time: str | None = None
+    end_time: str | None = None
 
 
 class UnavailabilityPayload(BaseModel):

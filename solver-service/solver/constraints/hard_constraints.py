@@ -232,6 +232,10 @@ def apply_hard_constraints(
         elif slot_number is not None and date:
             key = (date, f"slot_{slot_number}")
             label = f"{date} slot_{slot_number}"
+        # The (date, period) fallback was removed: it grouped 16 sessions per half-day
+        # instead of 4 per exact timeslot, making the model infeasible on real data.
+        # Sessions from db_snapshot_adapter always carry start_time/end_time (NOT NULL
+        # columns), so branch 1 should always fire. Branch 2 exists for synthetic tests.
         else:
             continue
 

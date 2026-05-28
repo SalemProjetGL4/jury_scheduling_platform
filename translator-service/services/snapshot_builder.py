@@ -38,9 +38,18 @@ def build_solver_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
         for p in snapshot.get("projects", [])
     ]
     sessions = [
-        {"id": s["id"], "date": s["date"], "period": s["period"]}
+        {
+            "id": s["id"],
+            "date": s["date"],
+            "period": s["period"],
+            "slot_number": s.get("slot_number"),
+            "start_time": s.get("start_time"),
+            "end_time": s.get("end_time"),
+        }
         for s in snapshot.get("sessions", [])
     ]
+    assert all(s["start_time"] is not None for s in sessions), \
+        f"sessions missing start_time: {[s for s in sessions if s['start_time'] is None]}"
 
     global_cap = max((p["max_juries"] for p in professors), default=2)
 
