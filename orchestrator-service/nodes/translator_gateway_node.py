@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from adapters.translator_gateway_client import translate_via_gateway
 from contracts.translator_gateway_response import TranslatorGatewayResponse
-from graph.state import SchedulingState, add_error, mark_node_end, mark_node_start
+from graph.state import SchedulingState, add_error, mark_node_end, mark_node_start, mark_step_end, mark_step_start
 
 
 def translator_gateway_node(state: SchedulingState) -> SchedulingState:
@@ -10,12 +10,21 @@ def translator_gateway_node(state: SchedulingState) -> SchedulingState:
     mark_node_start(state, node_name)
 
     try:
-        response = translate_via_gateway(
-            request_id=state["request_id"],
-            prompt=state["user_prompt"],
-            user_id=state.get("user_id"),
-        )
-        parsed = TranslatorGatewayResponse.model_validate(response)
+        mark_step_start(state, node_name, "http_call")
+        try:
+            response = translate_via_gateway(
+                request_id=state["request_id"],
+                prompt=state["user_prompt"],
+                user_id=state.get("user_id"),
+            )
+        finally:
+            mark_step_end(state, node_name, "http_call")
+
+        mark_step_start(state, node_name, "parse_response")
+        try:
+            parsed = TranslatorGatewayResponse.model_validate(response)
+        finally:
+            mark_step_end(state, node_name, "parse_response")
 
         state["db_snapshot"] = parsed.db_snapshot
         state["translator_payload"] = parsed.translator_payload

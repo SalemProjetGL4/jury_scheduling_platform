@@ -106,6 +106,13 @@ export async function pollUntilDone(requestId, onStatus, signal) {
       console.log('solver_result keys:', Object.keys(result?.solver_result || {}))
       console.log('solutions array:', result?.solver_result?.solutions)
       console.groupEnd()
+      const nodeHistory = result?.node_history || []
+      const starts = nodeHistory.map(e => e.started_at && new Date(e.started_at).getTime()).filter(Boolean)
+      const ends   = nodeHistory.map(e => e.ended_at   && new Date(e.ended_at).getTime()).filter(Boolean)
+      const totalDurationMs = starts.length && ends.length
+        ? Math.round(Math.max(...ends) - Math.min(...starts))
+        : null
+      console.log(`[Pipeline] Run ${requestId} completed in ${totalDurationMs ?? '?'}ms — report saved`)
       return result
     }
 

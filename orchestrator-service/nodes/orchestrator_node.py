@@ -3,7 +3,7 @@ from __future__ import annotations
 from adapters.llm_provider_adapter import get_provider
 from adapters.prompt_registry import prompt_registry
 from contracts.orchestrator_output import safe_parse_orchestrator_output
-from graph.state import SchedulingState, add_error, mark_node_end, mark_node_start
+from graph.state import SchedulingState, add_error, mark_node_end, mark_node_start, mark_step_end, mark_step_start
 
 
 def _fallback_route(prompt: str, has_old_result: bool) -> tuple[str, str]:
@@ -25,7 +25,11 @@ def orchestrator_node(state: SchedulingState) -> SchedulingState:
     has_old_result = state.get("old_solver_result") is not None
 
     try:
-        system_prompt, prompt_hash = prompt_registry.get_with_hash("orchestrator.system.txt")
+        mark_step_start(state, node_name, "prompt_load")
+        try:
+            system_prompt, prompt_hash = prompt_registry.get_with_hash("orchestrator.system.txt")
+        finally:
+            mark_step_end(state, node_name, "prompt_load")
 
         context_prefix = (
             "[CONTEXT: A previous scheduling result exists. The user may want to edit it.]\n"
@@ -36,9 +40,19 @@ def orchestrator_node(state: SchedulingState) -> SchedulingState:
 
         try:
             provider = get_provider()
-            raw_output = provider.complete(system_prompt=system_prompt, user_message=user_message)
 
-            parsed, error = safe_parse_orchestrator_output(raw_output)
+            mark_step_start(state, node_name, "llm_call")
+            try:
+                raw_output = provider.complete(system_prompt=system_prompt, user_message=user_message)
+            finally:
+                mark_step_end(state, node_name, "llm_call")
+
+            mark_step_start(state, node_name, "parse_output")
+            try:
+                parsed, error = safe_parse_orchestrator_output(raw_output)
+            finally:
+                mark_step_end(state, node_name, "parse_output")
+
             if parsed is None:
                 raise ValueError(f"orchestrator_output_invalid: {error}")
 
@@ -53,7 +67,13 @@ def orchestrator_node(state: SchedulingState) -> SchedulingState:
             return state
         except Exception as llm_exc:
             add_error(state, f"orchestrator_llm_fallback_used: {llm_exc}")
-            route, summary = _fallback_route(state["user_prompt"], has_old_result)
+
+            mark_step_start(state, node_name, "fallback_route")
+            try:
+                route, summary = _fallback_route(state["user_prompt"], has_old_result)
+            finally:
+                mark_step_end(state, node_name, "fallback_route")
+
             state["route"] = route
             state["intent_summary"] = summary
             mark_node_end(
