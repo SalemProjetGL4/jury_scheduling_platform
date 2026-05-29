@@ -8,6 +8,7 @@ import Generation from './pages/Generation'
 import Resultats from './pages/Resultats'
 import Calendrier from './pages/Calendrier'
 import Exports from './pages/Exports'
+import Monitoring from './pages/Monitoring'
 
 function PageShell({ title, subtitle, children }) {
   return (
@@ -74,9 +75,9 @@ export default function App() {
             <Exports />
           </PageShell>
         } />
-        <Route path="/parametres" element={
-          <PageShell title="Paramètres" subtitle="Configuration de l'application.">
-            <div className="bg-white rounded-xl p-8 text-gray-500">Paramètres à venir…</div>
+        <Route path="/monitoring" element={
+          <PageShell title="Monitoring" subtitle="Surveillez les agents et le dernier workflow.">
+            <Monitoring />
           </PageShell>
         } />
       </Routes>

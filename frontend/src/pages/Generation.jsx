@@ -37,7 +37,7 @@ function nodeStatus(nodeName, nodeHistory, currentNode) {
 
 export default function Generation() {
   const navigate = useNavigate()
-  const { result: workflowResult, saveResult, clearResult } = useWorkflow()
+  const { result: workflowResult, saveResult, clearResult, saveStatus, clearStatus } = useWorkflow()
 
   const [prompt, setPrompt] = useState('')
   const [phase, setPhase] = useState('idle') // idle | running | done | error
@@ -63,6 +63,7 @@ export default function Generation() {
       ? workflowResult?.solver_result
       : null
     clearResult()   // wipe the previous result so Results page never shows stale data
+    clearStatus()
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -77,7 +78,7 @@ export default function Generation() {
 
       const result = await pollUntilDone(
         request_id,
-        (status) => setStatusPayload(status),
+        (status) => { setStatusPayload(status); saveStatus(status) },
         controller.signal,
       )
 

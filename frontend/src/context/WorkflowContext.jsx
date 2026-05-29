@@ -9,6 +9,7 @@ function load(key) {
 export function WorkflowProvider({ children }) {
   const [result, setResult] = useState(() => load('juriq_workflow_result'))
   const [selectedSolution, setSelectedSolution] = useState(() => load('juriq_selected_solution'))
+  const [status, setStatus] = useState(() => load('juriq_workflow_status'))
 
   function saveResult(data) {
     console.group('[WorkflowContext] saveResult')
@@ -27,6 +28,16 @@ export function WorkflowProvider({ children }) {
     try { localStorage.removeItem('juriq_workflow_result') } catch { /* ok */ }
   }
 
+  function saveStatus(payload) {
+    setStatus(payload)
+    try { localStorage.setItem('juriq_workflow_status', JSON.stringify(payload)) } catch { /* quota */ }
+  }
+
+  function clearStatus() {
+    setStatus(null)
+    try { localStorage.removeItem('juriq_workflow_status') } catch { /* ok */ }
+  }
+
   function saveSelectedSolution(sol) {
     setSelectedSolution(sol)
     try { localStorage.setItem('juriq_selected_solution', JSON.stringify(sol)) } catch { /* quota */ }
@@ -38,7 +49,19 @@ export function WorkflowProvider({ children }) {
   }
 
   return (
-    <WorkflowContext.Provider value={{ result, saveResult, clearResult, selectedSolution, saveSelectedSolution, clearSelectedSolution }}>
+    <WorkflowContext.Provider
+      value={{
+        result,
+        saveResult,
+        clearResult,
+        status,
+        saveStatus,
+        clearStatus,
+        selectedSolution,
+        saveSelectedSolution,
+        clearSelectedSolution,
+      }}
+    >
       {children}
     </WorkflowContext.Provider>
   )

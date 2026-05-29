@@ -46,6 +46,11 @@ export function getWorkflowResult(requestId) {
   return orcFetch(`/workflows/${requestId}/result`)
 }
 
+// GET /workflows/monitor/health → { orchestrator, translator, solver, reflector, updater }
+export function getServiceHealth() {
+  return orcFetch('/workflows/monitor/health')
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }

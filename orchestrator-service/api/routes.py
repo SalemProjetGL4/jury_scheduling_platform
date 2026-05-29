@@ -6,8 +6,11 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+import requests
+
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 
+from config import settings
 from contracts.api_models import ScheduleAcceptedResponse, ScheduleRequest, StatusResponse
 from graph.graph_builder import graph
 from graph.state import SchedulingState, init_state, utc_now_iso
@@ -168,6 +171,21 @@ def _write_latency_report(result: dict, triggered_at: str) -> None:
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
 
+def _probe_health(name: str, base_url: str | None) -> dict[str, str]:
+    if not base_url:
+        return {"status": "unknown", "detail": "missing_url"}
+
+    try:
+        response = requests.get(
+            f"{base_url.rstrip('/')}/health",
+            timeout=settings.gateway_timeout_seconds,
+        )
+        response.raise_for_status()
+        return {"status": "ok"}
+    except Exception as exc:
+        return {"status": "down", "detail": str(exc)}
+
+
 def _run_workflow(request_id: str) -> None:
     state = store.get(request_id)
     if state is None:
@@ -208,6 +226,17 @@ def schedule_workflow(payload: ScheduleRequest, background_tasks: BackgroundTask
     store.put(state)
     background_tasks.add_task(_run_workflow, request_id)
     return ScheduleAcceptedResponse(request_id=request_id, status="running")
+
+
+@router.get("/monitor/health")
+def monitor_health() -> dict[str, dict[str, str]]:
+    return {
+        "orchestrator": {"status": "ok"},
+        "translator": _probe_health("translator", settings.translator_service_url),
+        "solver": _probe_health("solver", settings.solver_service_url),
+        "reflector": _probe_health("reflector", settings.reflector_service_url),
+        "updater": _probe_health("updater", settings.updater_service_url),
+    }
 
 
 @router.get("/{request_id}/status", response_model=StatusResponse)
