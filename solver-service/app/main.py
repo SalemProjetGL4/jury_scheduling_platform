@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 import redis
+import requests
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -30,6 +31,8 @@ app = FastAPI(title="Juriq Solver Service", version="0.1.0")
 _redis_url = os.getenv("REDIS_URL", "").strip()
 _redis_ttl_seconds = int(os.getenv("REDIS_TTL_SECONDS", "0") or "0")
 _redis_client = redis.Redis.from_url(_redis_url, decode_responses=True) if _redis_url else None
+_reflector_service_url = os.getenv("REFLECTOR_SERVICE_URL", "http://reflector-service:8013").strip()
+_reflector_timeout_seconds = float(os.getenv("REFLECTOR_TIMEOUT_SECONDS", "30") or "30")
 
 _STATUS_KEY = "solver:status:{}"
 _RESULT_KEY = "solver:result:{}"
@@ -45,7 +48,25 @@ def _write_to_redis(key: str, data: dict[str, Any]) -> None:
         _redis_client.set(key, payload)
 
 
-def _do_solve(request_id: str, payload: dict[str, Any]) -> None:
+def _trigger_reflector(request_id: str, payload: dict[str, Any], solver_result: dict[str, Any]) -> dict[str, Any] | None:
+    if not _reflector_service_url:
+        return None
+
+    response = requests.post(
+        f"{_reflector_service_url.rstrip('/')}/reflect",
+        json={
+            "request_id": request_id,
+            "solver_result": solver_result,
+            "solver_payload": payload,
+            "db_snapshot": payload.get("db_snapshot"),
+        },
+        timeout=_reflector_timeout_seconds,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _do_solve(request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     projects = payload.get("projects") or []
     professors = payload.get("professors") or []
     sessions = payload.get("sessions") or []
@@ -79,6 +100,14 @@ def _do_solve(request_id: str, payload: dict[str, Any]) -> None:
             "failed_constraints": [{"constraint": "solver_exception", "reason": str(exc)}],
         }
 
+    try:
+        reflector_result = _trigger_reflector(request_id, payload, result)
+        if reflector_result is not None:
+            result["reflector_result"] = reflector_result
+    except Exception as exc:
+        logger.exception("REFLECTOR EXCEPTION — request_id=%s: %s", request_id, exc)
+        result["reflector_error"] = str(exc)
+
     status = result.get("status", "UNKNOWN")
     failed = result.get("failed_constraints") or []
     solutions = result.get("solutions") or []
@@ -96,6 +125,8 @@ def _do_solve(request_id: str, payload: dict[str, Any]) -> None:
         _write_to_redis(_STATUS_KEY.format(request_id), {"status": "done"})
     except Exception as exc:
         logger.error("REDIS WRITE FAILED — %s", exc)
+
+    return result
 
 
 @app.get("/health", tags=["health"])
@@ -128,12 +159,4 @@ def get_solve_result(request_id: str) -> dict[str, Any]:
 def solve_endpoint(payload: dict[str, Any]) -> dict[str, Any]:
     """Synchronous solve (kept for compatibility). Prefer /solve/async for large problems."""
     request_id = str(payload.get("request_id") or "").strip() or str(uuid4())
-    _do_solve(request_id, payload)
-
-    raw = _redis_client.get(_RESULT_KEY.format(request_id)) if _redis_client else None
-    if raw:
-        return json.loads(raw)
-
-    result = solve(payload)
-    result["request_id"] = request_id
-    return result
+    return _do_solve(request_id, payload)

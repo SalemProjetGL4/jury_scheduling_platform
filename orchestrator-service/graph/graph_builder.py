@@ -5,7 +5,6 @@ from langgraph.graph import END, StateGraph
 from graph.router import route_after_orchestrator, should_run_refine
 from graph.state import SchedulingState
 from nodes.orchestrator_node import orchestrator_node
-from nodes.reflector_node import reflector_node
 from nodes.solver_node import solver_node
 from nodes.solver_refine_node import solver_refine_node
 from nodes.translator_gateway_node import translator_gateway_node
@@ -19,7 +18,6 @@ def build_graph():
     builder.add_node("translator", translator_gateway_node)
     builder.add_node("orchestrator", orchestrator_node)
     builder.add_node("solver", solver_node)
-    builder.add_node("reflector", reflector_node)
     builder.add_node("translator_refine", translator_refine_node)
     builder.add_node("solver_refine", solver_refine_node)
     builder.add_node("updater", updater_node)
@@ -39,10 +37,9 @@ def build_graph():
         },
     )
 
-    # generate path: solver → reflector → (refine cycle only if suggestions exist) → END
-    builder.add_edge("solver", "reflector")
+    # The solver service now triggers reflector directly and returns that result.
     builder.add_conditional_edges(
-        "reflector",
+        "solver",
         should_run_refine,
         {"refine": "translator_refine", "skip": END},
     )

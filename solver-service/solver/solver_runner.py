@@ -36,7 +36,9 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
         }
 
     options = data.get("solver_options", {})
-    max_solutions = _as_positive_int(options.get("max_solutions"), default=1)
+    # Return a small pool of feasible schedules by default so the reflector can
+    # rank compromised solutions instead of seeing only the first one.
+    max_solutions = _as_positive_int(options.get("max_solutions"), default=3)
     include_soft_diagnostics = bool(options.get("include_soft_diagnostics", True))
 
     # Auto-disable conflict refiner for large problems: it adds one BoolVar assumption

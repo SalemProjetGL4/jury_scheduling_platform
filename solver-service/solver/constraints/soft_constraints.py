@@ -186,13 +186,13 @@ def build_custom_soft_penalty(
     clustering_w = normalize_weight(weights.get("clustering", 3), default=3)
     overload_w = normalize_weight(weights.get("overload", 20), default=20)
 
-    if workload_balance_expr:
+    if workload_balance_expr is not None:
         penalty_terms.append(workload_w * workload_balance_expr)
-    if expertise_expr:
+    if expertise_expr is not None:
         penalty_terms.append(expertise_w * expertise_expr)
-    if clustering_expr:
+    if clustering_expr is not None:
         penalty_terms.append(clustering_w * clustering_expr)
-    if overload_expr:
+    if overload_expr is not None:
         penalty_terms.append(overload_w * overload_expr)
 
     for rule in collect_rule_specs(data, "soft"):

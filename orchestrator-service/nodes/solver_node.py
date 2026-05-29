@@ -45,6 +45,9 @@ def solver_node(state: SchedulingState) -> SchedulingState:
                 )
 
         state["solver_result"] = result
+        reflector_result = result.get("reflector_result")
+        if reflector_result is not None:
+            state["reflector_result"] = reflector_result
         state["final_status"] = "infeasible" if result.get("status") == "INFEASIBLE" else "success"
         mark_node_end(state, node_name, status="success", summary=f"Solver returned {result.get('status', 'UNKNOWN')}")
         return state

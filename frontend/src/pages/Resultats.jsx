@@ -97,22 +97,62 @@ function buildChartsFromDB(sessionId, slots, assignments) {
 }
 
 // Parse orchestrator solver_result into display rows
-function buildSolutionsFromWorkflow(solverResult) {
+function buildSolutionsFromWorkflow(solverResult, reflectorResult) {
   if (!solverResult) return []
   const { status, solutions, assignments } = solverResult
-  const source = solutions?.length ? solutions : (assignments?.length ? [{ assignments }] : [])
+  const source = solutions?.length ? solutions : (assignments?.length ? [{ solution_index: 1, assignments }] : [])
+
+  const rankedSolutions = reflectorResult?.compromised_solutions || []
+  const hasReflectorRanking = rankedSolutions.length > 0
+
+  if (hasReflectorRanking) {
+    const baseByIndex = new Map(source.map((sol, i) => [Number(sol.solution_index || i + 1), sol]))
+    const recommendedIndex = Number(reflectorResult?.recommended_solution_index || 0)
+
+    return [...rankedSolutions]
+      .sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0) || (Number(a.solution_index) || 0) - (Number(b.solution_index) || 0))
+      .map((ranked, i) => {
+        const solutionIndex = Number(ranked.solution_index || i + 1)
+        const base = baseByIndex.get(solutionIndex) || source[i] || {}
+        const aa = base.assignments || []
+        const score = Math.max(0, Math.min(100, Math.round(Number(ranked.rating) || 0)))
+        const conflits = Number(ranked.violations_count ?? aa.filter(a => a.is_conflict).length ?? 0)
+        const explanation = ranked.explanation || (conflits > 0 ? `Reflected score with ${conflits} violation(s).` : 'No reflector explanation available.')
+
+        return {
+          id: solutionIndex,
+          label: `#${solutionIndex}`,
+          score,
+          stars: Math.min(4, Math.round(score / 25)),
+          conflits,
+          jours: new Set(aa.map(a => a.date).filter(Boolean)).size,
+          salles: new Set(aa.map(a => a.room).filter(Boolean)).size || 1,
+          soutenances: aa.length,
+          recommended: solutionIndex === recommendedIndex,
+          date: null,
+          rawAssignments: aa,
+          status: reflectorResult?.status || status,
+          reflectorStatus: reflectorResult?.status || null,
+          reflectorRating: ranked.rating,
+          reflectorViolations: ranked.violations_count,
+          reflectorTotalPenalty: ranked.total_penalty,
+          reflectorExplanation: explanation,
+        }
+      })
+  }
+
   return source.map((sol, i) => {
     const aa = sol.assignments || []
     const conflicts = aa.filter(a => a.is_conflict).length
     const score = Math.max(0, 100 - conflicts * 5 - (sol.total_penalty || 0) / 10)
     return {
-      id: i + 1, label: `#${i + 1}`, score: Math.round(score),
+      id: Number(sol.solution_index || i + 1), label: `#${Number(sol.solution_index || i + 1)}`, score: Math.round(score),
       stars: Math.min(4, Math.round(score / 25)),
       conflits: conflicts,
       jours: new Set(aa.map(a => a.date).filter(Boolean)).size,
       salles: new Set(aa.map(a => a.room).filter(Boolean)).size || 1,
       soutenances: aa.length,
-      recommended: i === (solverResult.recommended_index || 0),
+      recommended: i === (solverResult.recommended_index || solverResult.recommended_solution_index || 0),
       date: null, rawAssignments: aa, status,
     }
   })
@@ -373,9 +413,9 @@ export default function Resultats() {
   const hasWorkflow       = Boolean(wfSolverResult)
 
   const solutions = useMemo(() => {
-    if (hasWorkflow) return buildSolutionsFromWorkflow(wfSolverResult)
+    if (hasWorkflow) return buildSolutionsFromWorkflow(wfSolverResult, wfReflectorResult)
     return dbSolutions
-  }, [hasWorkflow, wfSolverResult, dbSolutions])
+  }, [hasWorkflow, wfSolverResult, wfReflectorResult, dbSolutions])
 
   const [selected, setSelected] = useState(null)
   const effectiveSelected = selected ?? solutions[0] ?? null
@@ -394,6 +434,7 @@ export default function Resultats() {
   }, [effectiveSelected, hasWorkflow, usingMock, slots, assignments])
 
   const loading = !hasWorkflow && loadingDb
+  const displayWorkflowStatus = wfReflectorResult?.status || wfSolverResult?.status
 
   return (
     <div className="space-y-4">
@@ -414,7 +455,7 @@ export default function Resultats() {
           <div className="px-5 py-2 bg-blue-50 border-b border-blue-100 flex items-center gap-2">
             <CheckCircle2 size={13} className="text-blue-500" />
             <span className="text-xs text-blue-700">
-              Résultat de la dernière génération — statut : <strong>{wfSolverResult?.status || '—'}</strong>
+              Résultat de la dernière génération — statut : <strong>{displayWorkflowStatus || '—'}</strong>
             </span>
             <button onClick={() => navigate('/generation')} className="ml-auto text-xs text-blue-600 hover:underline">
               Nouvelle génération
@@ -498,13 +539,13 @@ export default function Resultats() {
         <table className="min-w-full text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50">
-              {['Solution', 'Score', 'Conflits', 'Jours', 'Salles', 'Soutenances', 'Actions'].map(h => (
+              {['Solution', 'Score', 'Conflits', 'Jours', 'Salles', 'Soutenances', 'Explication', 'Actions'].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td className="px-4 py-10 text-center text-gray-400" colSpan={7}>Chargement…</td></tr>}
+            {loading && <tr><td className="px-4 py-10 text-center text-gray-400" colSpan={8}>Chargement…</td></tr>}
             {!loading && solutions.length === 0 && (() => {
               const solverStatus = wfSolverResult?.status
               const finalStatus  = workflowResult?.final_status
@@ -513,7 +554,7 @@ export default function Resultats() {
 
               if (solverStatus === 'INFEASIBLE') return (
                 <tr>
-                  <td colSpan={7}>
+                  <td colSpan={8}>
                     <div className="px-6 py-8 space-y-3">
                       <div className="flex items-center gap-2 text-red-600">
                         <AlertTriangle size={18} />
@@ -547,7 +588,7 @@ export default function Resultats() {
 
               if (finalStatus === 'error' || wfErrors.length > 0) return (
                 <tr>
-                  <td colSpan={7}>
+                  <td colSpan={8}>
                     <div className="px-6 py-8 space-y-3">
                       <div className="flex items-center gap-2 text-orange-600">
                         <AlertTriangle size={18} />
@@ -571,7 +612,7 @@ export default function Resultats() {
 
               return (
                 <tr>
-                  <td colSpan={7}>
+                  <td colSpan={8}>
                     <div className="flex flex-col items-center justify-center py-12 gap-3">
                       <CalendarDays size={36} className="text-gray-300" />
                       <p className="text-sm font-medium text-gray-500">Aucun résultat disponible</p>
@@ -601,6 +642,11 @@ export default function Resultats() {
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.jours}</td>
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.salles}</td>
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.soutenances}</td>
+                <td className="px-4 py-3 text-gray-600 max-w-[22rem]">
+                  <span className="block text-xs leading-5 text-gray-500 whitespace-normal break-words">
+                    {sol.reflectorExplanation || '—'}
+                  </span>
+                </td>
                 <td className="px-4 py-3 whitespace-nowrap">
                   <div className="flex gap-1.5">
                     <button

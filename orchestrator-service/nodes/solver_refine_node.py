@@ -27,6 +27,10 @@ def solver_refine_node(state: SchedulingState) -> SchedulingState:
         payload["request_id"] = state["request_id"]
         result = solve_via_gateway(payload)
 
+        reflector_result = result.get("reflector_result")
+        if reflector_result is not None:
+            state["reflector_result"] = reflector_result
+
         original = state.get("solver_result")
         original_status = (original or {}).get("status", "")
         new_status = result.get("status", "")
