@@ -1,14 +1,14 @@
 Return this JSON object exactly:
 
 {
-  "professors": [{"id": 1, "domain_id": 10, "max_juries": 2}],
-  "projects": [{"id": 100, "domain_id": 10, "supervisor_id": 1}],
+  "professors": [{"id": 1, "domain_id": 10, "domain_ids": [10], "specialities": ["software", "ai"], "max_juries": 2}],
+  "projects": [{"id": 100, "domain_id": 10, "domain_keywords": ["software", "engineering"], "supervisor_id": 1}],
   "sessions": [{"id": 3000, "date": "2026-06-20", "period": "morning"}],
   "constraints": {
     "hard_max_juries": 2,
     "weights": {
       "workload": 10,
-      "expertise": 5,
+      "expertise": 15,
       "clustering": 3,
       "overload": 20,
       "custom": 1

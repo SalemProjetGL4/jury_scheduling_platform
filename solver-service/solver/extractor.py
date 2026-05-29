@@ -4,7 +4,7 @@ from typing import Any
 
 from ortools.sat.python import cp_model
 
-from solver.constraints.rule_utils import WEIGHT_SCALE, collect_rule_specs
+from solver.constraints.rule_utils import WEIGHT_SCALE, collect_rule_specs, normalize_weight
 from solver.variables import ROLES, VariableBundle
 
 
@@ -186,6 +186,163 @@ def evaluate_soft_constraint_violations(
                 "weight_scaled": rule.weight,
                 "weight": round(rule.weight / WEIGHT_SCALE, 2),
                 "violation": violation,
+                "penalty": penalty,
+                "penalty_weighted": round(penalty / WEIGHT_SCALE, 2),
+            }
+        )
+
+    # --- Built-in penalties detection (workload, expertise, clustering, overload)
+    professors = data.get("professors", [])
+    projects = data.get("projects", [])
+    sessions = data.get("sessions", [])
+    professor_by_id = {p["id"]: p for p in professors}
+    project_by_id = {pr["id"]: pr for pr in projects}
+
+    # We will enumerate built-in checks after the user-provided soft rules
+    base_idx = len(list(collect_rule_specs(data, "soft")))
+    weights = data.get("constraints", {}).get("weights", {})
+
+    # Workload balance: sum |load * n_prof - total_assignments|
+    n_prof = max(1, len(professors))
+    total_assignments = len(projects) * len(ROLES)
+    prof_loads: dict[int, int] = {p["id"]: 0 for p in professors}
+    for assignment in assignments:
+        for role_key in ("president", "examiner"):
+            pid = assignment.get("roles", {}).get(role_key)
+            if pid is not None and pid in prof_loads:
+                prof_loads[pid] += 1
+
+    workload_violation = 0
+    for pid, load in prof_loads.items():
+        lhs = load * n_prof - total_assignments
+        workload_violation += abs(int(lhs))
+
+    workload_w = normalize_weight(weights.get("workload", 10), default=10)
+    if workload_violation > 0:
+        penalty = workload_w * workload_violation
+        unsatisfied.append(
+            {
+                "rule_index": base_idx + 1,
+                "rule": "workload",
+                "payload": {},
+                "weight_scaled": workload_w,
+                "weight": round(workload_w / WEIGHT_SCALE, 2),
+                "violation": workload_violation,
+                "penalty": penalty,
+                "penalty_weighted": round(penalty / WEIGHT_SCALE, 2),
+            }
+        )
+
+    # Expertise: count president/examiner assignments that don't match domain/keywords
+    def _normalize_keywords(values: list[Any]) -> set[str]:
+        tokens: set[str] = set()
+        for item in values:
+            if not item:
+                continue
+            raw = str(item)
+            for part in raw.replace(",", " ").replace(";", " ").split():
+                token = part.strip().lower()
+                if token:
+                    tokens.add(token)
+        return tokens
+
+    expertise_violation = 0
+    for assignment in assignments:
+        proj_id = assignment.get("project_id")
+        proj = project_by_id.get(proj_id)
+        if not proj:
+            continue
+        project_domain = proj.get("domain_id")
+        project_kw = _normalize_keywords(list(proj.get("domain_keywords") or []))
+        for role_key in ("president", "examiner"):
+            pid = assignment.get("roles", {}).get(role_key)
+            if pid is None:
+                continue
+            prof = professor_by_id.get(pid)
+            if not prof:
+                continue
+            prof_domains = {int(v) for v in (prof.get("domain_ids") or []) if v}
+            prof_domain = prof.get("domain_id")
+            prof_kw = _normalize_keywords(list(prof.get("specialities") or []))
+
+            has_domain_match = False
+            if project_domain and prof_domains:
+                has_domain_match = project_domain in prof_domains
+            elif project_domain and prof_domain:
+                has_domain_match = project_domain == prof_domain
+
+            has_keyword_match = bool(project_kw and prof_kw and (project_kw & prof_kw))
+            if not (has_domain_match or has_keyword_match):
+                expertise_violation += 1
+
+    expertise_w = normalize_weight(weights.get("expertise", 5), default=5)
+    if expertise_violation > 0:
+        penalty = expertise_w * expertise_violation
+        unsatisfied.append(
+            {
+                "rule_index": base_idx + 2,
+                "rule": "expertise",
+                "payload": {},
+                "weight_scaled": expertise_w,
+                "weight": round(expertise_w / WEIGHT_SCALE, 2),
+                "violation": expertise_violation,
+                "penalty": penalty,
+                "penalty_weighted": round(penalty / WEIGHT_SCALE, 2),
+            }
+        )
+
+    # Clustering: number of used days per professor (non-zero indicates penalty)
+    prof_days: dict[int, set[str]] = {p["id"]: set() for p in professors}
+    sessions_by_id = {s["id"]: s for s in sessions}
+    for assignment in assignments:
+        sid = assignment.get("session_id")
+        sess = sessions_by_id.get(sid)
+        if not sess:
+            continue
+        date = str(sess.get("date"))
+        for pid in assignment.get("roles", {}).values():
+            prof_days.setdefault(pid, set()).add(date)
+
+    clustering_violation = 0
+    for pid, days in prof_days.items():
+        clustering_violation += len(days)
+
+    clustering_w = normalize_weight(weights.get("clustering", 3), default=3)
+    if clustering_violation > 0:
+        penalty = clustering_w * clustering_violation
+        unsatisfied.append(
+            {
+                "rule_index": base_idx + 3,
+                "rule": "clustering",
+                "payload": {},
+                "weight_scaled": clustering_w,
+                "weight": round(clustering_w / WEIGHT_SCALE, 2),
+                "violation": clustering_violation,
+                "penalty": penalty,
+                "penalty_weighted": round(penalty / WEIGHT_SCALE, 2),
+            }
+        )
+
+    # Overload: voluntary assignments beyond professor.max_juries
+    overload_violation = 0
+    for p in professors:
+        pid = p["id"]
+        cap = int(p.get("max_juries", 2))
+        assigned = prof_loads.get(pid, 0)
+        if assigned > cap:
+            overload_violation += assigned - cap
+
+    overload_w = normalize_weight(weights.get("overload", 20), default=20)
+    if overload_violation > 0:
+        penalty = overload_w * overload_violation
+        unsatisfied.append(
+            {
+                "rule_index": base_idx + 4,
+                "rule": "overload",
+                "payload": {},
+                "weight_scaled": overload_w,
+                "weight": round(overload_w / WEIGHT_SCALE, 2),
+                "violation": overload_violation,
                 "penalty": penalty,
                 "penalty_weighted": round(penalty / WEIGHT_SCALE, 2),
             }

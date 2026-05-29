@@ -25,12 +25,15 @@ SUPPORTED_SOFT_RULES = {
 class ProfessorPayload(BaseModel):
     id: int
     domain_id: int
+    domain_ids: list[int] = Field(default_factory=list)
+    specialities: list[str] = Field(default_factory=list)
     max_juries: int
 
 
 class ProjectPayload(BaseModel):
     id: int
     domain_id: int
+    domain_keywords: list[str] = Field(default_factory=list)
     supervisor_id: int
 
 
@@ -58,7 +61,7 @@ class ConstraintsPayload(BaseModel):
     hard_max_juries: int = 2
     weights: dict[str, int] = Field(default_factory=lambda: {
         "workload": 10,
-        "expertise": 5,
+        "expertise": 15,
         "clustering": 3,
         "overload": 20,
         "custom": 1,

@@ -30,11 +30,22 @@ def snapshot_stats(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 def build_solver_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
     professors = [
-        {"id": p["id"], "domain_id": p["domain_id"], "max_juries": p["max_juries"]}
+        {
+            "id": p["id"],
+            "domain_id": p["domain_id"],
+            "domain_ids": list(p.get("domain_ids") or []),
+            "specialities": list(p.get("specialities") or []),
+            "max_juries": p["max_juries"],
+        }
         for p in snapshot.get("professors", [])
     ]
     projects = [
-        {"id": p["id"], "domain_id": p["domain_id"], "supervisor_id": p["supervisor_id"]}
+        {
+            "id": p["id"],
+            "domain_id": p["domain_id"],
+            "domain_keywords": list(p.get("domain_keywords") or []),
+            "supervisor_id": p["supervisor_id"],
+        }
         for p in snapshot.get("projects", [])
     ]
     sessions = [

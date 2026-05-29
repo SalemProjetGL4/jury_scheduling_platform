@@ -8,14 +8,13 @@ from ortools.sat.python import cp_model
 
 from solver.constraints.rule_utils import collect_rule_specs
 from solver.variables import ROLES, VariableBundle
+from solver.constraints.rule_utils import normalize_weight
 
 
 @dataclass
 class SoftTerms:
-    workload_balance: cp_model.LinearExpr
-    expertise_penalty: cp_model.LinearExpr
-    clustering_penalty: cp_model.LinearExpr
-    overload_penalty: cp_model.LinearExpr
+    # All soft penalty expressions are aggregated into `custom_penalty` so they
+    # are created and reported uniformly via the custom-rule path.
     custom_penalty: cp_model.LinearExpr
 
 
@@ -57,13 +56,52 @@ def build_soft_terms(
     # Expertise penalty for president/examiner assignments that do not match project domain.
     professor_by_id = {p["id"]: p for p in professors}
     project_by_id = {p["id"]: p for p in projects}
+
+    def _normalize_keywords(values: list[Any]) -> set[str]:
+        tokens: set[str] = set()
+        for item in values:
+            if not item:
+                continue
+            raw = str(item)
+            for part in raw.replace(",", " ").replace(";", " ").split():
+                token = part.strip().lower()
+                if token:
+                    tokens.add(token)
+        return tokens
+
+    professor_domains: dict[int, set[int]] = {}
+    professor_keywords: dict[int, set[str]] = {}
+    for pid, professor in professor_by_id.items():
+        raw_domains = professor.get("domain_ids") or []
+        professor_domains[pid] = {int(value) for value in raw_domains if value}
+        professor_keywords[pid] = _normalize_keywords(list(professor.get("specialities") or []))
+
+    project_keywords: dict[int, set[str]] = {}
+    for pr_id, project in project_by_id.items():
+        project_keywords[pr_id] = _normalize_keywords(list(project.get("domain_keywords") or []))
     expertise_terms: list[cp_model.IntVar] = []
     for pid in professor_ids:
         for pr_id in project_ids:
-            professor_domain = professor_by_id[pid].get("domain_id")
             project_domain = project_by_id[pr_id].get("domain_id")
-            is_match = professor_domain == project_domain
-            if is_match:
+            project_kw = project_keywords.get(pr_id) or set()
+            if not project_domain and not project_kw:
+                continue
+
+            domains = professor_domains.get(pid) or set()
+            professor_domain = professor_by_id[pid].get("domain_id")
+            professor_kw = professor_keywords.get(pid) or set()
+            if not domains and not professor_domain and not professor_kw:
+                continue
+
+            has_domain_match = False
+            if project_domain and domains:
+                has_domain_match = project_domain in domains
+            elif project_domain and professor_domain:
+                has_domain_match = project_domain == professor_domain
+
+            has_keyword_match = bool(project_kw and professor_kw and (project_kw & professor_kw))
+
+            if has_domain_match or has_keyword_match:
                 continue
             for role in ("PRESIDENT", "EXAMINER"):
                 for session in sessions:
@@ -101,22 +139,22 @@ def build_soft_terms(
 
     overload_penalty = sum(overload_vars)
 
-    custom_penalty = build_custom_soft_penalty(
+    # Delegate to custom penalty builder which will also include the built-in
+    # penalty expressions with weights taken from `data["constraints"]["weights"]`.
+    combined_custom = build_custom_soft_penalty(
         model=model,
         data=data,
         vars_=vars_,
         professor_ids=professor_ids,
         project_ids=project_ids,
         sessions=sessions,
+        workload_balance_expr=workload_balance,
+        expertise_expr=expertise_penalty,
+        clustering_expr=clustering_penalty,
+        overload_expr=overload_penalty,
     )
 
-    return SoftTerms(
-        workload_balance=workload_balance,
-        expertise_penalty=expertise_penalty,
-        clustering_penalty=clustering_penalty,
-        overload_penalty=overload_penalty,
-        custom_penalty=custom_penalty,
-    )
+    return SoftTerms(custom_penalty=combined_custom)
 
 
 def build_custom_soft_penalty(
@@ -126,6 +164,11 @@ def build_custom_soft_penalty(
     professor_ids: list[int],
     project_ids: list[int],
     sessions: list[dict[str, Any]],
+    *,
+    workload_balance_expr: cp_model.LinearExpr | int = 0,
+    expertise_expr: cp_model.LinearExpr | int = 0,
+    clustering_expr: cp_model.LinearExpr | int = 0,
+    overload_expr: cp_model.LinearExpr | int = 0,
 ) -> cp_model.LinearExpr:
     professor_id_set = set(professor_ids)
     project_id_set = set(project_ids)
@@ -134,6 +177,23 @@ def build_custom_soft_penalty(
     session_by_id = {s["id"]: s for s in sessions}
 
     penalty_terms: list[cp_model.LinearExpr] = []
+
+    # Include built-in penalties as "custom" terms so they are treated and
+    # reported the same way as user-provided custom soft rules.
+    weights = data.get("constraints", {}).get("weights", {})
+    workload_w = normalize_weight(weights.get("workload", 10), default=10)
+    expertise_w = normalize_weight(weights.get("expertise", 5), default=5)
+    clustering_w = normalize_weight(weights.get("clustering", 3), default=3)
+    overload_w = normalize_weight(weights.get("overload", 20), default=20)
+
+    if workload_balance_expr:
+        penalty_terms.append(workload_w * workload_balance_expr)
+    if expertise_expr:
+        penalty_terms.append(expertise_w * expertise_expr)
+    if clustering_expr:
+        penalty_terms.append(clustering_w * clustering_expr)
+    if overload_expr:
+        penalty_terms.append(overload_w * overload_expr)
 
     for rule in collect_rule_specs(data, "soft"):
         name = rule.name
