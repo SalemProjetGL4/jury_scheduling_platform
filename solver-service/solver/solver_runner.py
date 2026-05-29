@@ -22,13 +22,17 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
     import logging
     _log = logging.getLogger("solver")
 
+    timing_info: dict[str, float] = {}
+
     t0 = time.monotonic()
     precheck_violations = build_infeasibility_report(data)
+    timing_info["precheck_ms"] = round((time.monotonic() - t0) * 1000)
     _log.info("TIMING precheck: %.2fs", time.monotonic() - t0)
     if precheck_violations:
         return {
             "status": "INFEASIBLE",
             "failed_constraints": precheck_violations,
+            "timing_info": timing_info,
         }
 
     options = data.get("solver_options", {})
@@ -46,6 +50,7 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
 
     t1 = time.monotonic()
     bundle = build_model(data, include_conflict_refiner=include_conflict_refiner)
+    timing_info["model_build_ms"] = round((time.monotonic() - t1) * 1000)
     _log.info("TIMING model_build: %.2fs", time.monotonic() - t1)
 
     solver = cp_model.CpSolver()
@@ -62,6 +67,8 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
     stop_after_first = bool(options.get("stop_after_first_solution", auto_large))
 
     solutions: list[dict[str, Any]] = []
+    _t_solve_pure = 0.0
+    _t_extract_total = 0.0
 
     class _FirstSolutionStopper(cp_model.CpSolverSolutionCallback):
         def on_solution_callback(self) -> None:
@@ -69,12 +76,19 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
 
     while len(solutions) < max_solutions:
         callback = _FirstSolutionStopper() if stop_after_first else None
+
+        _ts = time.monotonic()
         status = solver.Solve(bundle.model, callback)
+        _t_solve_pure += time.monotonic() - _ts
+
         if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             break
 
+        _te = time.monotonic()
         assignments = extract_assignments(solver, data, bundle.vars_)
         soft_eval = evaluate_soft_constraint_violations(data, assignments)
+        _t_extract_total += time.monotonic() - _te
+
         raw_status = solver.StatusName(status)
         quality_status = _derive_quality_status(raw_status, soft_eval["unsatisfied_soft_constraints"])
         solution: dict[str, Any] = {
@@ -89,6 +103,11 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
 
         solutions.append(solution)
         _add_no_good_cut(bundle.model, bundle.vars_, assignments)
+
+    timing_info["solve_ms"] = round(_t_solve_pure * 1000)
+    timing_info["extract_ms"] = round(_t_extract_total * 1000)
+
+    t_post = time.monotonic()
 
     if solutions:
         best_objective = min(int(solution["objective_value"]) for solution in solutions)
@@ -105,6 +124,8 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
             "solution_count": len(solutions),
             "solutions_limit_reached": max_solutions > 1 and len(solutions) >= max_solutions,
         }
+        timing_info["postprocess_ms"] = round((time.monotonic() - t_post) * 1000)
+        response["timing_info"] = timing_info
         return response
 
     last_status = solver.StatusName(status)
@@ -112,6 +133,7 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
 
     # Distinguish timeout (UNKNOWN) from proven infeasibility (INFEASIBLE).
     if last_status == "UNKNOWN":
+        timing_info["postprocess_ms"] = round((time.monotonic() - t_post) * 1000)
         return {
             "status": "INFEASIBLE",
             "failed_constraints": [
@@ -124,6 +146,7 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
                     ),
                 }
             ],
+            "timing_info": timing_info,
         }
 
     conflict_report: list[dict[str, Any]] = []
@@ -132,10 +155,13 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
             solver.SufficientAssumptionsForInfeasibility()
         )
 
+    timing_info["postprocess_ms"] = round((time.monotonic() - t_post) * 1000)
+
     if conflict_report:
         return {
             "status": "INFEASIBLE",
             "failed_constraints": conflict_report,
+            "timing_info": timing_info,
         }
 
     return {
@@ -146,6 +172,7 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
                 "reason": "Model has no feasible solution with current hard constraints",
             }
         ],
+        "timing_info": timing_info,
     }
 
 

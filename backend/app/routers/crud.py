@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -68,8 +69,15 @@ def build_crud_router(
         if not obj:
             raise HTTPException(status_code=404, detail=f"{tag} not found")
 
-        db.delete(obj)
-        db.commit()
+        try:
+            db.delete(obj)
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="Impossible de supprimer : ce professeur est lié à des projets ou des affectations existantes."
+            )
         return None
 
     return router

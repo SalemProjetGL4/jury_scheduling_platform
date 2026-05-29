@@ -217,14 +217,6 @@ function SolutionDetail({ sol, repartitionParJour, repartitionParSalle, onViewCa
           <h3 className="text-sm font-semibold text-gray-900">Solution {sol.label}</h3>
           <span className="text-sm font-bold text-green-600">Score : {sol.score}%</span>
         </div>
-        <div className="flex gap-1 mt-3 flex-wrap">
-          {DETAIL_TABS.map(t => (
-            <button key={t} onClick={() => setTab(t)}
-              className={`text-xs px-3 py-1.5 rounded-md font-medium transition-colors ${tab === t ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
-              {t}
-            </button>
-          ))}
-        </div>
       </div>
 
       <div className="px-5 py-4 space-y-5">
@@ -603,10 +595,7 @@ export default function Resultats() {
                   {sol.recommended && <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">recommandée</span>}
                 </td>
                 <td className="px-4 py-3 whitespace-nowrap">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-semibold text-green-600">{sol.score}%</span>
-                    <Stars n={sol.stars} />
-                  </div>
+                  <span className="font-semibold text-green-600">{sol.score}%</span>
                 </td>
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.conflits}</td>
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.jours}</td>
@@ -615,18 +604,9 @@ export default function Resultats() {
                 <td className="px-4 py-3 whitespace-nowrap">
                   <div className="flex gap-1.5">
                     <button
-                      onClick={e => { e.stopPropagation(); setSelected(sol) }}
-                      className="text-xs text-blue-600 font-medium hover:underline">
-                      Voir
-                    </button>
-                    <button
                       onClick={e => { e.stopPropagation(); saveSelectedSolution(sol); navigate('/calendrier') }}
                       className="text-xs border border-gray-300 rounded px-2 py-0.5 hover:bg-gray-50">
                       Calendrier
-                    </button>
-                    <button onClick={e => { e.stopPropagation(); setSelected(sol) }}
-                      className="text-xs bg-blue-600 text-white rounded px-2 py-0.5 hover:bg-blue-700">
-                      Sélectionner
                     </button>
                   </div>
                 </td>
@@ -642,13 +622,6 @@ export default function Resultats() {
           </div>
         )}
 
-        {activeTab === 'Solutions générées' && (
-          <div className="px-5 py-3 flex gap-2">
-            <button className="text-xs text-gray-600 border border-gray-300 rounded-lg px-3 py-1.5 hover:bg-gray-50">
-              Comparer les solutions
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Right — detail + reflector */}

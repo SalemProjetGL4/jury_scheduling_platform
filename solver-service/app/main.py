@@ -60,6 +60,13 @@ def _do_solve(request_id: str, payload: dict[str, Any]) -> None:
         len(payload.get("unavailabilities") or []),
         len(payload.get("conflicts") or []),
     )
+    try:
+        import json as _json
+        with open("/app/logs/solver_payload_debug2.json", "w", encoding="utf-8") as _f:
+            _json.dump(payload, _f, indent=2, default=str)
+        logger.info("DEBUG payload written to /app/logs/solver_payload_debug2.json")
+    except Exception as _e:
+        logger.warning("DEBUG payload write failed: %s", _e)
 
     try:
         result = solve(payload)

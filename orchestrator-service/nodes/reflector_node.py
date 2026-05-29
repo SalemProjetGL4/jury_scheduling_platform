@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from adapters.reflector_gateway_client import reflect_via_gateway
-from graph.state import SchedulingState, add_error, mark_node_end, mark_node_start
+from graph.state import SchedulingState, add_error, mark_node_end, mark_node_start, mark_step_end, mark_step_start
 
 
 def reflector_node(state: SchedulingState) -> SchedulingState:
@@ -16,18 +16,29 @@ def reflector_node(state: SchedulingState) -> SchedulingState:
             mark_node_end(state, node_name, status="failed", summary="Missing solver result")
             return state
 
-        result = reflect_via_gateway(
-            request_id=state["request_id"],
-            solver_result=solver_result,
-            solver_payload=state.get("translator_payload"),
-            db_snapshot=state.get("db_snapshot"),
-        )
-        state["reflector_result"] = result
+        mark_step_start(state, node_name, "http_call")
+        try:
+            result = reflect_via_gateway(
+                request_id=state["request_id"],
+                solver_result=solver_result,
+                solver_payload=state.get("translator_payload"),
+                db_snapshot=state.get("db_snapshot"),
+            )
+        finally:
+            mark_step_end(state, node_name, "http_call")
+
+        mark_step_start(state, node_name, "process_result")
+        try:
+            state["reflector_result"] = result
+            reflector_status = result.get("status", "UNKNOWN")
+        finally:
+            mark_step_end(state, node_name, "process_result")
+
         mark_node_end(
             state,
             node_name,
             status="success",
-            summary=f"Reflector returned status={result.get('status', 'UNKNOWN')}",
+            summary=f"Reflector returned status={reflector_status}",
         )
         return state
 
