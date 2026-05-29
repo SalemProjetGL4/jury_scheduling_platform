@@ -22,7 +22,7 @@ def update_via_gateway(
             "translator_payload": translator_payload,
             "db_snapshot": db_snapshot,
         },
-        timeout=settings.llm_timeout_seconds,
+        timeout=settings.gateway_timeout_seconds,
     )
     response.raise_for_status()
     return response.json()

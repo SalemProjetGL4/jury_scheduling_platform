@@ -52,6 +52,7 @@ def schedule_workflow(payload: ScheduleRequest, background_tasks: BackgroundTask
         prompt=payload.prompt,
         user_id=payload.user_id,
         old_solver_result=payload.old_solver_result,
+        requested_route=payload.requested_route,
     )
     store.put(state)
     background_tasks.add_task(_run_workflow, request_id)

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CheckCircle2, Circle, Loader2, XCircle } from 'lucide-react'
 import { scheduleWorkflow, pollUntilDone, enrichSolverResult } from '../services/orchestratorApi'
@@ -37,26 +37,43 @@ function nodeStatus(nodeName, nodeHistory, currentNode) {
 
 export default function Generation() {
   const navigate = useNavigate()
-  const { saveResult, clearResult } = useWorkflow()
+  const { result: workflowResult, saveResult, clearResult } = useWorkflow()
 
   const [prompt, setPrompt] = useState('')
   const [phase, setPhase] = useState('idle') // idle | running | done | error
   const [statusPayload, setStatusPayload] = useState(null)
   const [error, setError] = useState('')
   const abortRef = useRef(null)
+  const hasSolution = Boolean(
+    workflowResult?.solver_result?.solutions?.length || workflowResult?.solver_result?.assignments?.length,
+  )
+  const [mode, setMode] = useState(hasSolution ? 'edit' : 'new')
+
+  useEffect(() => {
+    if (!hasSolution && mode === 'edit') setMode('new')
+  }, [hasSolution, mode])
 
   async function handleLaunch() {
     if (!prompt.trim()) return
     setError('')
     setPhase('running')
     setStatusPayload(null)
+    const requestedRoute = hasSolution && mode === 'edit' ? 'EDIT' : 'GENERATE'
+    const oldSolverResult = hasSolution && mode === 'edit'
+      ? workflowResult?.solver_result
+      : null
     clearResult()   // wipe the previous result so Results page never shows stale data
 
     const controller = new AbortController()
     abortRef.current = controller
 
     try {
-      const { request_id } = await scheduleWorkflow(prompt.trim())
+      const { request_id } = await scheduleWorkflow(
+        prompt.trim(),
+        null,
+        oldSolverResult,
+        requestedRoute,
+      )
 
       const result = await pollUntilDone(
         request_id,
@@ -130,6 +147,36 @@ export default function Generation() {
             Indiquez ce que vous souhaitez changer ou améliorer dans la répartition.
           </p>
         </div>
+
+        {hasSolution && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Mode :</span>
+            <button
+              type="button"
+              onClick={() => setMode('edit')}
+              disabled={phase === 'running'}
+              className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                mode === 'edit'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'text-gray-600 border-gray-300 hover:bg-gray-50'
+              } ${phase === 'running' ? 'opacity-50' : ''}`}
+            >
+              Modifier la solution
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('new')}
+              disabled={phase === 'running'}
+              className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                mode === 'new'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'text-gray-600 border-gray-300 hover:bg-gray-50'
+              } ${phase === 'running' ? 'opacity-50' : ''}`}
+            >
+              Nouvelle génération
+            </button>
+          </div>
+        )}
 
         <textarea
           rows={5}

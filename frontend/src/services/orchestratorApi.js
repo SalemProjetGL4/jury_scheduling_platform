@@ -29,10 +29,10 @@ async function orcFetch(path, options = {}) {
 }
 
 // POST /workflows/schedule → { request_id, status }
-export function scheduleWorkflow(prompt, userId = null, oldSolverResult = null) {
+export function scheduleWorkflow(prompt, userId = null, oldSolverResult = null, requestedRoute = null) {
   return orcFetch('/workflows/schedule', {
     method: 'POST',
-    body: { prompt, user_id: userId, old_solver_result: oldSolverResult },
+    body: { prompt, user_id: userId, old_solver_result: oldSolverResult, requested_route: requestedRoute },
   })
 }
 

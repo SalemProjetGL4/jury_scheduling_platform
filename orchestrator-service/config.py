@@ -1,6 +1,4 @@
 from pathlib import Path
-from typing import Literal
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,16 +13,8 @@ class Settings(BaseSettings):
     reflector_service_url: str = "http://localhost:8013"
     updater_service_url: str = "http://localhost:8014"
 
-    llm_provider: Literal["gemini", "groq", "local"] = "groq"
-    llm_model: str = "llama-3.3-70b-versatile"
-    llm_timeout_seconds: int = 30
-    llm_max_retries: int = 2
+    gateway_timeout_seconds: int = 30
     solver_timeout_seconds: int = 600
-
-    gemini_api_key: str | None = None
-    groq_api_key: str | None = None
-    local_llm_base_url: str = "http://localhost:11434/v1"
-    local_llm_api_key: str = "local"
 
 
 settings = Settings()
