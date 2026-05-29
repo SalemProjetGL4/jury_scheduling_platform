@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   CalendarDays, LayoutDashboard, Database, SlidersHorizontal,
-  Sparkles, BarChart2, Download, Settings,
+  Sparkles, BarChart2, Download, Activity,
 } from 'lucide-react'
 
 const navItems = [
@@ -49,7 +49,7 @@ export default function Sidebar() {
       {/* Bottom */}
       <div className="px-3 py-4 border-t border-gray-100">
         <NavLink
-          to="/parametres"
+          to="/monitoring"
           className={({ isActive }) =>
             `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
               isActive
@@ -58,8 +58,8 @@ export default function Sidebar() {
             }`
           }
         >
-          <Settings size={18} />
-          Paramètres
+          <Activity size={18} />
+          Monitoring
         </NavLink>
       </div>
     </aside>

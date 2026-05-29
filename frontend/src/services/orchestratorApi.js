@@ -29,10 +29,10 @@ async function orcFetch(path, options = {}) {
 }
 
 // POST /workflows/schedule → { request_id, status }
-export function scheduleWorkflow(prompt, userId = null, oldSolverResult = null) {
+export function scheduleWorkflow(prompt, userId = null, oldSolverResult = null, requestedRoute = null) {
   return orcFetch('/workflows/schedule', {
     method: 'POST',
-    body: { prompt, user_id: userId, old_solver_result: oldSolverResult },
+    body: { prompt, user_id: userId, old_solver_result: oldSolverResult, requested_route: requestedRoute },
   })
 }
 
@@ -44,6 +44,11 @@ export function getWorkflowStatus(requestId) {
 // GET /workflows/:id/result → full SchedulingState
 export function getWorkflowResult(requestId) {
   return orcFetch(`/workflows/${requestId}/result`)
+}
+
+// GET /workflows/monitor/health → { orchestrator, translator, solver, reflector, updater }
+export function getServiceHealth() {
+  return orcFetch('/workflows/monitor/health')
 }
 
 function sleep(ms) {
@@ -106,6 +111,13 @@ export async function pollUntilDone(requestId, onStatus, signal) {
       console.log('solver_result keys:', Object.keys(result?.solver_result || {}))
       console.log('solutions array:', result?.solver_result?.solutions)
       console.groupEnd()
+      const nodeHistory = result?.node_history || []
+      const starts = nodeHistory.map(e => e.started_at && new Date(e.started_at).getTime()).filter(Boolean)
+      const ends   = nodeHistory.map(e => e.ended_at   && new Date(e.ended_at).getTime()).filter(Boolean)
+      const totalDurationMs = starts.length && ends.length
+        ? Math.round(Math.max(...ends) - Math.min(...starts))
+        : null
+      console.log(`[Pipeline] Run ${requestId} completed in ${totalDurationMs ?? '?'}ms — report saved`)
       return result
     }
 

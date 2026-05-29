@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -9,6 +9,7 @@ class ScheduleRequest(BaseModel):
     prompt: str
     user_id: str | None = None
     old_solver_result: dict[str, Any] | None = None
+    requested_route: Literal["GENERATE", "EDIT", "QUERY"] | None = None
 
 
 class ScheduleAcceptedResponse(BaseModel):

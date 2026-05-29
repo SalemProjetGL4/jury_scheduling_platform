@@ -15,7 +15,7 @@ def translate_via_gateway(*, request_id: str, prompt: str, user_id: str | None) 
             "prompt": prompt,
             "user_id": user_id,
         },
-        timeout=settings.llm_timeout_seconds,
+        timeout=settings.gateway_timeout_seconds,
     )
     response.raise_for_status()
     return response.json()

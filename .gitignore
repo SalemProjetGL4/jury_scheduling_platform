@@ -18,3 +18,4 @@ backend/db/data extraction/data/*
 node_modules/
 dist/
 scripts/
+reports/

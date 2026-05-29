@@ -24,11 +24,20 @@ class NodeEvent(TypedDict):
     summary: Optional[str]
 
 
+class StepEvent(TypedDict):
+    agentName: str
+    stepName: str
+    startedAt: str        # ISO string; empty for synthetic entries injected from remote services
+    endedAt: Optional[str]
+    durationMs: Optional[float]
+
+
 class SchedulingState(TypedDict):
     request_id: str
     user_id: Optional[str]
     user_prompt: str
 
+    requested_route: Optional[RouteType]
     route: Optional[RouteType]
     intent_summary: Optional[str]
 
@@ -45,6 +54,7 @@ class SchedulingState(TypedDict):
 
     current_node: Optional[str]
     node_history: list[NodeEvent]
+    step_history: list[StepEvent]
     errors: list[str]
     final_status: FinalStatus
 
@@ -59,11 +69,13 @@ def init_state(
     prompt: str,
     user_id: str | None,
     old_solver_result: dict | None = None,
+    requested_route: RouteType | None = None,
 ) -> SchedulingState:
     return SchedulingState(
         request_id=request_id,
         user_id=user_id,
         user_prompt=prompt,
+        requested_route=requested_route,
         route=None,
         intent_summary=None,
         db_snapshot=None,
@@ -76,6 +88,7 @@ def init_state(
         reflector_result=None,
         current_node=None,
         node_history=[],
+        step_history=[],
         errors=[],
         final_status="running",
     )
@@ -101,6 +114,26 @@ def mark_node_end(state: SchedulingState, node: str, *, status: NodeStatus, summ
         state["current_node"] = None
 
     _logger.info("[%s] ■ node END   status=%s summary=%s", node, status, summary)
+
+
+def mark_step_start(state: SchedulingState, agent_name: str, step_name: str) -> None:
+    state["step_history"].append(
+        StepEvent(agentName=agent_name, stepName=step_name, startedAt=utc_now_iso(), endedAt=None, durationMs=None)
+    )
+
+
+def mark_step_end(state: SchedulingState, agent_name: str, step_name: str) -> None:
+    now = utc_now_iso()
+    for event in reversed(state["step_history"]):
+        if event["agentName"] == agent_name and event["stepName"] == step_name and event["endedAt"] is None:
+            event["endedAt"] = now
+            try:
+                start_ms = datetime.fromisoformat(event["startedAt"]).timestamp() * 1000
+                end_ms = datetime.fromisoformat(now).timestamp() * 1000
+                event["durationMs"] = round(end_ms - start_ms, 1)
+            except Exception:
+                pass
+            break
 
 
 def add_error(state: SchedulingState, message: str) -> None:

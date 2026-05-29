@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 from adapters.solver_gateway_client import solve_via_gateway
-from graph.state import SchedulingState, add_error, mark_node_end, mark_node_start
+from graph.state import SchedulingState, StepEvent, add_error, mark_node_end, mark_node_start, mark_step_end, mark_step_start
+
+# Maps timing_info keys returned by solver_runner to human-readable step names.
+_SOLVER_STEP_LABELS: dict[str, str] = {
+    "precheck_ms":    "precheck",
+    "model_build_ms": "model_build",
+    "solve_ms":       "solve",
+    "extract_ms":     "extraction",
+    "postprocess_ms": "postprocess",
+}
 
 
 def solver_node(state: SchedulingState) -> SchedulingState:
@@ -18,7 +27,23 @@ def solver_node(state: SchedulingState) -> SchedulingState:
 
         payload = dict(payload)
         payload["request_id"] = state["request_id"]
-        result = solve_via_gateway(payload)
+
+        mark_step_start(state, node_name, "gateway_call")
+        try:
+            result = solve_via_gateway(payload)
+        finally:
+            mark_step_end(state, node_name, "gateway_call")
+
+        # Inject internal solver timings as synthetic step entries (no wall-clock timestamps
+        # since they were measured inside the remote solver service).
+        timing_info: dict = result.pop("timing_info", None) or {}
+        for key, label in _SOLVER_STEP_LABELS.items():
+            duration = timing_info.get(key)
+            if duration is not None:
+                state["step_history"].append(
+                    StepEvent(agentName=node_name, stepName=label, startedAt="", endedAt="", durationMs=float(duration))
+                )
+
         state["solver_result"] = result
         state["final_status"] = "infeasible" if result.get("status") == "INFEASIBLE" else "success"
         mark_node_end(state, node_name, status="success", summary=f"Solver returned {result.get('status', 'UNKNOWN')}")
