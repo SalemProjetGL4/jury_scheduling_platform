@@ -74,7 +74,7 @@ def build_reflector_context(payload: dict[str, Any]) -> dict[str, Any]:
     failed_constraints = solver_result.get("failed_constraints", [])
 
     # BUILD NAME LOOKUP from db_snapshot if available (has real names)
-    db_snapshot = payload.get("db_snapshot", {})
+    db_snapshot = payload.get("db_snapshot") or {}
     prof_names = {
         p["id"]: p.get("name", f"Professor {p['id']}")
         for p in db_snapshot.get("professors", [])
