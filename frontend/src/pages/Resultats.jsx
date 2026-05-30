@@ -410,7 +410,9 @@ export default function Resultats() {
   // Prefer orchestrator result if present
   const wfSolverResult    = workflowResult?.solver_result
   const wfReflectorResult = workflowResult?.reflector_result
+  const wfUpdaterResult   = workflowResult?.updater_result
   const hasWorkflow       = Boolean(wfSolverResult)
+  const hasUpdaterFallback = Boolean(wfUpdaterResult?.preserved_original)
 
   const solutions = useMemo(() => {
     if (hasWorkflow) return buildSolutionsFromWorkflow(wfSolverResult, wfReflectorResult)
@@ -460,6 +462,12 @@ export default function Resultats() {
             <button onClick={() => navigate('/generation')} className="ml-auto text-xs text-blue-600 hover:underline">
               Nouvelle génération
             </button>
+          </div>
+        )}
+
+        {hasUpdaterFallback && (
+          <div className="px-5 py-3 bg-amber-50 border-b border-amber-100">
+            <p className="text-sm text-amber-800">Impossible de trouver une nouvelle solution avec ces données.</p>
           </div>
         )}
 

@@ -139,7 +139,10 @@ def build_db_snapshot() -> dict[str, Any]:
         title = str(row["title"] or "")
         domain_name = str(row["domain_name"] or "")
         project_id = int(row["id"])
-        keywords = project_keywords_by_id.get(project_id, _extract_title_keywords(title))
+        keywords = _merge_keywords(
+            _extract_domain_keywords(domain_name),
+            project_keywords_by_id.get(project_id, _extract_title_keywords(title)),
+        )
         logger.info(
             "PROJECT KEYWORDS — id=%s domain_id=%s title=%r keywords=%s",
             project_id,
@@ -288,6 +291,23 @@ def _extract_title_keywords(title: str) -> list[str]:
         if len(normalized) < 2:
             continue
         if normalized in _TITLE_STOPWORDS:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        keywords.append(normalized)
+
+    return keywords
+
+
+def _extract_domain_keywords(domain_name: str) -> list[str]:
+    tokens = re.findall(r"[\w]+", domain_name.lower(), flags=re.UNICODE)
+    keywords: list[str] = []
+    seen: set[str] = set()
+
+    for token in tokens:
+        normalized = token.strip("_-'")
+        if len(normalized) < 2:
             continue
         if normalized in seen:
             continue

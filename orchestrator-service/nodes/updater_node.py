@@ -30,9 +30,34 @@ def updater_node(state: SchedulingState) -> SchedulingState:
             translator_payload=translator_payload,
             db_snapshot=state.get("db_snapshot"),
         )
+
+        # If the updater could not find a feasible refined solution but the
+        # original solver result was good, preserve the original so the user
+        # still sees a valid schedule. Mirror the solver_refine_node behaviour.
+        original_status = (old_result or {}).get("status", "")
+        new_status = result.get("status", "")
+
         state["updater_result"] = result
-        state["final_status"] = "success"
-        mark_node_end(state, node_name, status="success", summary="Updater applied changes to existing schedule")
+
+        if new_status == "INFEASIBLE" and original_status in ("OPTIMAL", "FEASIBLE"):
+            state["solver_result"] = old_result
+            result = dict(result)
+            result["preserved_original"] = True
+            result["message"] = "Updater n'a pas trouvé de nouvelle solution avec ces données; le résultat original a été conservé."
+            state["updater_result"] = result
+            state["final_status"] = "success"
+            mark_node_end(
+                state,
+                node_name,
+                status="success",
+                summary="Updater n'a pas trouvé de nouvelle solution; résultat original conservé",
+            )
+            return state
+
+        # Normal case: use updater's returned result as the new solver result.
+        state["solver_result"] = result
+        state["final_status"] = "infeasible" if new_status == "INFEASIBLE" else "success"
+        mark_node_end(state, node_name, status="success", summary=f"Updater returned {new_status}")
         return state
 
     except Exception as exc:
