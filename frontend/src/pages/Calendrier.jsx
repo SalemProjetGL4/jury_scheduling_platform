@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronLeft, ChevronRight, SlidersHorizontal, X, CalendarDays } from 'lucide-react'
+import { ChevronLeft, ChevronRight, SlidersHorizontal, X, CalendarDays, Download } from 'lucide-react'
 import { apiRequest } from '../services/api'
 import { useWorkflow } from '../context/WorkflowContext'
 import { useNavigate } from 'react-router-dom'
@@ -624,6 +624,12 @@ export default function Calendrier() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <span style={{ fontSize: '11px', color: '#86efac' }}>Score : {solutionScore ?? '100'}%</span>
+            <button
+              onClick={() => navigate('/exports')}
+              style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#fff', background: '#16a34a', border: 'none', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontWeight: 600 }}
+            >
+              <Download size={12} /> Exporter
+            </button>
             {selectedSolution && (
               <button
                 onClick={clearSelectedSolution}
