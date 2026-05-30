@@ -31,6 +31,8 @@ class ReflectorOutput(BaseModel):
     recommended_solution_index: int | None = None
     compromised_solutions: list[CompromisedSolutionReview] = Field(default_factory=list)
     relaxation_suggestions: list[RelaxationSuggestion] = Field(default_factory=list)
+    timing_info: dict[str, float] | None = None
+    token_usage: dict[str, int] | None = None
 
 
 def extract_json_object(raw_text: str) -> str:

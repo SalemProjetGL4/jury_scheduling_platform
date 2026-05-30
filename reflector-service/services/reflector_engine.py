@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from adapters.llm_provider_adapter import get_provider
@@ -36,10 +37,14 @@ def reflect_solver_output(request: ReflectRequest) -> dict[str, Any]:
     }
 
     try:
-        parsed = _apply_llm_reflection(payload)
+        parsed, timing_info, token_usage = _apply_llm_reflection(payload)
         if parsed is not None:
+            _t = time.monotonic()
             result = parsed.model_dump(mode="json")
             _write_scores_to_redis(request, result)
+            timing_info["output_parsing_and_state_write"] = round((time.monotonic() - _t) * 1000)
+            result["timing_info"] = timing_info
+            result["token_usage"] = token_usage
             return result
     except Exception as exc:
         # Surface LLM errors clearly but return a valid ReflectorOutput dict
@@ -62,8 +67,11 @@ def reflect_solver_output(request: ReflectRequest) -> dict[str, Any]:
         }
 
     # If LLM was not used / returned None, use the deterministic fallback
+    _t = time.monotonic()
     result = _build_fallback_reflection(payload)
     _write_scores_to_redis(request, result)
+    result["timing_info"] = {"output_parsing_and_state_write": round((time.monotonic() - _t) * 1000)}
+    result["token_usage"] = token_usage  # may be None if parse failed after a real LLM call
     return result
 
 
@@ -346,7 +354,10 @@ def build_reflector_context(payload: dict[str, Any]) -> dict[str, Any]:
     return context
 
 
-def _apply_llm_reflection(payload: dict[str, Any]) -> ReflectorOutput | None:
+def _apply_llm_reflection(payload: dict[str, Any]) -> tuple[ReflectorOutput | None, dict[str, float], dict[str, int] | None]:
+    import time
+    timing_info: dict[str, float] = {}
+
     system_prompt, _ = prompt_registry.get_with_hash("reflector.system.txt")
     schema_prompt, _ = prompt_registry.get_with_hash("reflector.schema.txt")
 
@@ -356,26 +367,35 @@ def _apply_llm_reflection(payload: dict[str, Any]) -> ReflectorOutput | None:
     # Tag the system prompt so we can verify which prompt was actually sent
     tagged_system = f"REFLECTOR_V3\n{system_prompt}\n\nReturn strict JSON only.\n{schema_prompt}"
 
+    # ── Step: input_preparation ───────────────────────────────────────────────
+    _t = time.monotonic()
     reflector_context = build_reflector_context(payload)
     user_message = json.dumps(reflector_context, ensure_ascii=True)
+    timing_info["input_preparation"] = round((time.monotonic() - _t) * 1000)
 
     # Log what we're about to send
     logger.info("LLM adapter: %s", adapter_name)
     logger.info("SYSTEM PROMPT (first 300 chars): %s", tagged_system[:300].replace('\n', '\\n'))
     logger.info("USER PAYLOAD (first 1000 chars): %s", user_message[:1000])
 
+    # ── Step: llm_evaluation_call ─────────────────────────────────────────────
+    token_usage: dict[str, int] | None = None
     try:
+        _t = time.monotonic()
         raw_output = provider.complete(
             system_prompt=tagged_system,
             user_message=user_message,
         )
+        timing_info["llm_evaluation_call"] = round((time.monotonic() - _t) * 1000)
+        token_usage = getattr(provider, "last_token_usage", None)
     except Exception as exc:  # log and re-raise
+        timing_info["llm_evaluation_call"] = round((time.monotonic() - _t) * 1000)
         logger.exception("LLM provider.complete() failed: %s", exc)
         raise
 
     logger.info("RAW MODEL OUTPUT (first 2000 chars): %s", (raw_output or '')[:2000])
     parsed, _ = safe_parse_reflector_output(raw_output)
-    return parsed
+    return parsed, timing_info, token_usage
 
 
 def _build_fallback_reflection(payload: dict[str, Any]) -> dict[str, Any]:

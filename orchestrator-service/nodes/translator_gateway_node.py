@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from adapters.translator_gateway_client import translate_via_gateway
 from contracts.translator_gateway_response import TranslatorGatewayResponse
-from graph.state import SchedulingState, add_error, mark_node_end, mark_node_start, mark_step_end, mark_step_start
+from graph.state import SchedulingState, StepEvent, add_error, mark_node_end, mark_node_start, mark_step_end, mark_step_start
 
 
 def translator_gateway_node(state: SchedulingState) -> SchedulingState:
@@ -26,6 +26,13 @@ def translator_gateway_node(state: SchedulingState) -> SchedulingState:
         finally:
             mark_step_end(state, node_name, "parse_response")
 
+        # Inject fine-grained internal steps measured inside the translator service.
+        for step_name, duration_ms in (parsed.timing_info or {}).items():
+            state["step_history"].append(
+                StepEvent(agentName=node_name, stepName=step_name, startedAt="", endedAt="", durationMs=float(duration_ms))
+            )
+
+        state["translator_token_usage"] = parsed.token_usage or {}
         state["db_snapshot"] = parsed.db_snapshot
         state["translator_payload"] = parsed.translator_payload
         state["recognized_constraints"] = list(parsed.recognized_constraints)

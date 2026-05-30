@@ -22,14 +22,19 @@ def orchestrator_node(state: SchedulingState) -> SchedulingState:
     node_name = "orchestrator"
     mark_node_start(state, node_name)
 
-    has_old_result = state.get("old_solver_result") is not None
+    has_old_result = False
+    prompt_hash = "?"
 
     try:
-        mark_step_start(state, node_name, "prompt_load")
+        # ── Step: redis_solution_existence_check ──────────────────────────────
+        # Determines whether a prior solver result exists in state (originally
+        # persisted from Redis), and loads the routing system prompt.
+        mark_step_start(state, node_name, "redis_solution_existence_check")
         try:
+            has_old_result = state.get("old_solver_result") is not None
             system_prompt, prompt_hash = prompt_registry.get_with_hash("orchestrator.system.txt")
         finally:
-            mark_step_end(state, node_name, "prompt_load")
+            mark_step_end(state, node_name, "redis_solution_existence_check")
 
         context_prefix = (
             "[CONTEXT: A previous scheduling result exists. The user may want to edit it.]\n"
@@ -41,17 +46,15 @@ def orchestrator_node(state: SchedulingState) -> SchedulingState:
         try:
             provider = get_provider()
 
-            mark_step_start(state, node_name, "llm_call")
+            # ── Step: routing_decision ────────────────────────────────────────
+            # LLM call + output parse that classifies the request as
+            # GENERATE / EDIT / QUERY.
+            mark_step_start(state, node_name, "routing_decision")
             try:
                 raw_output = provider.complete(system_prompt=system_prompt, user_message=user_message)
-            finally:
-                mark_step_end(state, node_name, "llm_call")
-
-            mark_step_start(state, node_name, "parse_output")
-            try:
                 parsed, error = safe_parse_orchestrator_output(raw_output)
             finally:
-                mark_step_end(state, node_name, "parse_output")
+                mark_step_end(state, node_name, "routing_decision")
 
             if parsed is None:
                 raise ValueError(f"orchestrator_output_invalid: {error}")

@@ -165,6 +165,48 @@ def _write_latency_report(result: dict, triggered_at: str) -> None:
         logger.warning("Failed to write latency report — %s", exc)
 
 
+def _write_token_report(result: dict, request_id: str) -> None:
+    translator_usage = result.get("translator_token_usage") or {}
+    reflector_usage = result.get("reflector_token_usage") or {}
+
+    if not translator_usage:
+        logger.warning("token_report: translator token_usage missing for run %s", request_id)
+    if not reflector_usage:
+        logger.warning("token_report: reflector token_usage missing for run %s", request_id)
+
+    t_prompt = int(translator_usage.get("prompt_tokens") or 0)
+    t_comp   = int(translator_usage.get("completion_tokens") or 0)
+    t_total  = int(translator_usage.get("total_tokens") or 0)
+
+    r_prompt = int(reflector_usage.get("prompt_tokens") or 0)
+    r_comp   = int(reflector_usage.get("completion_tokens") or 0)
+    r_total  = int(reflector_usage.get("total_tokens") or 0)
+
+    total_prompt = t_prompt + r_prompt
+    total_comp   = t_comp + r_comp
+    total_total  = t_total + r_total
+
+    report = (
+        "# LLM Token Consumption Report\n\n"
+        f"Generated: {utc_now_iso()} — Run {request_id}\n\n"
+        "| Component | Prompt tokens | Completion tokens | Total |\n"
+        "|-----------|--------------|-------------------|-------|\n"
+        f"| Translator (Groq) | {t_prompt} | {t_comp} | {t_total} |\n"
+        f"| Reflector (OpenAI) | {r_prompt} | {r_comp} | {r_total} |\n"
+        f"| **Total LLM** | **{total_prompt}** | **{total_comp}** | **{total_total}** |\n"
+    )
+
+    try:
+        _REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        (_REPORTS_DIR / "token_report.md").write_text(report, encoding="utf-8")
+        logger.info(
+            "TOKEN REPORT saved — request_id=%s total_tokens=%d",
+            request_id, total_total,
+        )
+    except Exception as exc:
+        logger.warning("Failed to write token report — %s", exc)
+
+
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
 
@@ -193,6 +235,7 @@ def _run_workflow(request_id: str) -> None:
     )
     store.put(result)
     _write_latency_report(result, triggered_at)
+    _write_token_report(result, request_id)
 
 
 @router.post("/schedule", response_model=ScheduleAcceptedResponse, status_code=status.HTTP_202_ACCEPTED)

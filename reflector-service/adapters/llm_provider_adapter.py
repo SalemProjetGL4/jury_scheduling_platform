@@ -89,6 +89,15 @@ class OpenAIAdapter:
                     temperature=0,
                 )
 
+                usage = getattr(response, "usage", None)
+                self.last_token_usage: dict | None = None
+                if usage is not None:
+                    self.last_token_usage = {
+                        "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                        "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                        "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+                    }
+
                 try:
                     return response.choices[0].message.content
                 except Exception:

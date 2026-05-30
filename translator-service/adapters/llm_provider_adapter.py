@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import Protocol
 
 from config import settings
+
+logger = logging.getLogger("translator")
 
 
 class LLMProvider(Protocol):
@@ -34,6 +37,7 @@ class GroqAdapter:
             raise ValueError("Missing groq_api_key")
 
         client = Groq(api_key=settings.groq_api_key)
+        self.last_token_usage: dict | None = None
         response = client.chat.completions.create(
             model=settings.llm_model,
             messages=[
@@ -42,6 +46,15 @@ class GroqAdapter:
             ],
             temperature=0,
         )
+        usage = response.usage
+        logger.info(f"[TOKEN DEBUG] Groq raw response.usage: {response.usage}")
+        if usage is not None:
+            self.last_token_usage = {
+                "prompt_tokens": usage.prompt_tokens or 0,
+                "completion_tokens": usage.completion_tokens or 0,
+                "total_tokens": usage.total_tokens or 0,
+            }
+        logger.info(f"[TOKEN DEBUG] self.last_token_usage set to: {self.last_token_usage}")
         return response.choices[0].message.content or ""
 
 

@@ -11,3 +11,5 @@ class TranslatorGatewayResponse(BaseModel):
     recognized_constraints: list[dict[str, str]]
     unrecognized_constraints: list[dict[str, str]]
     db_snapshot: dict[str, Any]
+    timing_info: dict[str, float] | None = None
+    token_usage: dict[str, int] | None = None

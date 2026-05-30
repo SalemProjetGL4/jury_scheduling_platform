@@ -51,6 +51,9 @@ class SchedulingState(TypedDict):
     updater_result: Optional[dict[str, Any]]
     reflector_result: Optional[dict[str, Any]]
 
+    translator_token_usage: Optional[dict[str, Any]]
+    reflector_token_usage: Optional[dict[str, Any]]
+
     current_node: Optional[str]
     node_history: list[NodeEvent]
     step_history: list[StepEvent]
@@ -83,6 +86,8 @@ def init_state(
         solver_result=None,
         updater_result=None,
         reflector_result=None,
+        translator_token_usage=None,
+        reflector_token_usage=None,
         current_node=None,
         node_history=[],
         step_history=[],
