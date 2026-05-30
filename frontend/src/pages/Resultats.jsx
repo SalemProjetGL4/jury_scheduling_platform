@@ -246,7 +246,7 @@ function ReflectorPanel({ reflectorResult }) {
 
 const DETAIL_TABS = ['Aperçu', 'Calendrier', 'Détails', 'Conflits']
 
-function SolutionDetail({ sol, repartitionParJour, repartitionParSalle, onViewCalendar }) {
+function SolutionDetail({ sol, repartitionParJour, repartitionParSalle, onViewCalendar, onExport }) {
   const [tab, setTab] = useState('Aperçu')
   const navigate = useNavigate()
 
@@ -306,7 +306,7 @@ function SolutionDetail({ sol, repartitionParJour, repartitionParSalle, onViewCa
             className="flex-1 flex items-center justify-center gap-1.5 text-xs border border-gray-300 rounded-lg py-2 hover:bg-gray-50 font-medium">
             <CalendarDays size={13} /> Calendrier
           </button>
-          <button onClick={() => navigate('/exports')}
+          <button onClick={onExport}
             className="flex-1 flex items-center justify-center gap-1.5 text-xs border border-gray-300 rounded-lg py-2 hover:bg-gray-50 font-medium">
             <Download size={13} /> Exporter
           </button>
@@ -654,6 +654,11 @@ export default function Resultats() {
                       className="text-xs border border-gray-300 rounded px-2 py-0.5 hover:bg-gray-50">
                       Calendrier
                     </button>
+                    <button
+                      onClick={e => { e.stopPropagation(); saveSelectedSolution(sol); navigate('/exports') }}
+                      className="text-xs border border-gray-300 rounded px-2 py-0.5 hover:bg-gray-50">
+                      Exporter
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -678,6 +683,7 @@ export default function Resultats() {
               repartitionParJour={charts.repartitionParJour}
               repartitionParSalle={charts.repartitionParSalle}
               onViewCalendar={() => { saveSelectedSolution(effectiveSelected); navigate('/calendrier') }}
+              onExport={() => { saveSelectedSolution(effectiveSelected); navigate('/exports') }}
             />
           : <div className="bg-white rounded-xl border border-gray-200 p-4 text-sm text-gray-400">Aucune solution sélectionnée.</div>
         }

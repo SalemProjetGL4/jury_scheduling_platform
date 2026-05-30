@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   CalendarDays, LayoutDashboard, Database, SlidersHorizontal,
-  Sparkles, BarChart2, Download, Activity,
+  Sparkles, BarChart2, Activity,
 } from 'lucide-react'
 
 const navItems = [
@@ -10,8 +10,6 @@ const navItems = [
   { to: '/contraintes', icon: SlidersHorizontal,  label: 'Contraintes' },
   { to: '/generation',  icon: Sparkles,           label: 'Génération' },
   { to: '/resultats',   icon: BarChart2,          label: 'Résultats' },
-  { to: '/calendrier',  icon: CalendarDays,       label: 'Calendrier' },
-  { to: '/exports',     icon: Download,           label: 'Exports' },
 ]
 
 export default function Sidebar() {
