@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Download, FileSpreadsheet, FileText, FileJson, Calendar, Table, User, Building } from 'lucide-react'
+import { Download, FileSpreadsheet, FileText, FileJson, FileType, Calendar, Table, User, Building, Loader2 } from 'lucide-react'
 import { apiRequest } from '../services/api'
-import { exportToCSV, exportToJSON } from '../utils/exportUtils'
+import { exportToCSV, exportToJSON, enrichAssignments } from '../utils/exportUtils'
+import { exportBothDocx } from '../utils/docxExport'
 import { useWorkflow } from '../context/WorkflowContext'
 
 const FORMATS = [
@@ -10,6 +11,7 @@ const FORMATS = [
   { icon: Calendar,        label: 'iCal / ICS',    sub: "Importer dans\nGoogle Agenda", color: 'text-blue-600 bg-blue-50', iconColor: '#2563EB' },
   { icon: Table,           label: 'CSV',           sub: 'Données brutes',          color: 'text-gray-600 bg-gray-100',   iconColor: '#4B5563' },
   { icon: FileJson,        label: 'JSON',          sub: 'Export brut JSON',         color: 'text-teal-600 bg-teal-50',    iconColor: '#0D9488' },
+  { icon: FileType,        label: 'Word (docx)',   sub: 'Planning GL + RT',         color: 'text-indigo-600 bg-indigo-50',iconColor: '#4338CA' },
   { icon: User,            label: 'Par jury (PDF)', sub: 'Planning par jury',      color: 'text-purple-600 bg-purple-50',iconColor: '#7C3AED' },
   { icon: Building,        label: 'Par salle (PDF)', sub: 'Planning par salle',   color: 'text-amber-600 bg-amber-50',  iconColor: '#D97706' },
 ]
@@ -88,6 +90,7 @@ export default function Exports() {
   const [domains, setDomains]           = useState([])
   const [slots, setSlots]               = useState([])
   const [loadingLookup, setLoadingLookup] = useState(true)
+  const [loadingDocx, setLoadingDocx]     = useState(false)
 
   useEffect(() => {
     let active = true
@@ -135,6 +138,19 @@ export default function Exports() {
     return () => { active = false }
   }, [])
 
+  async function handleWordExport() {
+    if (disabled || loadingLookup || loadingDocx) return
+    setLoadingDocx(true)
+    try {
+      const enriched = enrichAssignments(assignments, { professors, projects, slots, students, domains })
+      await exportBothDocx(enriched, `pfe_session${year}_juriq_solution${solutionNumber}`)
+    } catch (err) {
+      console.error('[DOCX export]', err)
+    } finally {
+      setLoadingDocx(false)
+    }
+  }
+
   return (
     <div className="space-y-5 max-w-3xl">
       {/* Selected solution summary */}
@@ -176,13 +192,18 @@ export default function Exports() {
           {FORMATS.map(({ icon: Icon, label, sub, color, iconColor }) => {
             const isCSV  = label === 'CSV'
             const isJSON = label === 'JSON'
+            const isWord = label === 'Word (docx)'
             const lookup = { professors, projects, slots, students, domains, filename }
             const clientExport = isCSV
               ? () => exportToCSV(assignments, lookup)
               : isJSON
               ? () => exportToJSON(assignments, lookup)
+              : isWord
+              ? handleWordExport
               : undefined
-            const btnDisabled = (isCSV || isJSON) ? (disabled || loadingLookup) : false
+            const btnDisabled = (isCSV || isJSON) ? (disabled || loadingLookup)
+              : isWord ? (disabled || loadingLookup || loadingDocx)
+              : false
             return (
               <div key={label} className="border border-gray-200 rounded-xl p-4 flex flex-col items-center gap-3 hover:border-blue-300 hover:shadow-sm transition-all">
                 <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${color}`}>
@@ -195,10 +216,14 @@ export default function Exports() {
                 <button
                   onClick={clientExport}
                   disabled={btnDisabled}
-                  title={btnDisabled ? (loadingLookup ? 'Chargement des données…' : 'Aucun planning généré') : ''}
+                  title={btnDisabled ? (loadingDocx && isWord ? 'Génération en cours…' : loadingLookup ? 'Chargement des données…' : 'Aucun planning généré') : ''}
                   className={`flex items-center gap-1.5 w-full justify-center text-xs font-medium text-blue-600 border border-blue-200 rounded-lg py-2 hover:bg-blue-50 transition-colors${btnDisabled ? ' opacity-40 cursor-not-allowed' : ''}`}
                 >
-                  <Download size={13} /> Télécharger
+                  {isWord && loadingDocx
+                    ? <Loader2 size={13} className="animate-spin" />
+                    : <Download size={13} />
+                  }
+                  {isWord && loadingDocx ? 'Génération…' : 'Télécharger'}
                 </button>
               </div>
             )
