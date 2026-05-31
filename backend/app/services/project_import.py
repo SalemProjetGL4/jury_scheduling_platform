@@ -9,13 +9,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import models
+from app.services.domain_mapping import infer_domain_ids
 
 
 _COLUMN_ALIASES = {
     "project_title": "title",
     "project": "title",
-    "domain": "domain_name",
-    "domain_name": "domain_name",
+    "domain": "domain_names",
+    "domain_name": "domain_names",
+    "domain_names": "domain_names",
+    "domains": "domain_names",
     "supervisor": "supervisor_email",
     "supervisor_email": "supervisor_email",
     "professor_email": "supervisor_email",
@@ -116,6 +119,46 @@ def _to_clean_str(value: Any) -> str | None:
     return text or None
 
 
+def _resolve_domain_ids(
+    raw_names: str | None,
+    raw_ids: str | None,
+    domain_name_map: dict[str, int],
+    all_domain_ids: set[int],
+    default_domain_id: int | None,
+) -> tuple[list[int], str | None]:
+    """Return (resolved_ids, error_message). Supports comma-separated names/ids."""
+    resolved: list[int] = []
+
+    # Parse comma-separated IDs from a domain_id column if present
+    if raw_ids:
+        for part in str(raw_ids).split(","):
+            did = _to_int(part.strip())
+            if did is not None:
+                resolved.append(did)
+
+    # Parse comma-separated names from domain_name/domain_names column
+    if raw_names:
+        for part in str(raw_names).split(","):
+            name = part.strip().lower()
+            if name:
+                did = domain_name_map.get(name)
+                if did is not None and did not in resolved:
+                    resolved.append(did)
+
+    # Fall back to default
+    if not resolved and default_domain_id is not None:
+        resolved.append(default_domain_id)
+
+    if not resolved:
+        return [], "Missing domain_id or domain_name"
+
+    unknown = [d for d in resolved if d not in all_domain_ids]
+    if unknown:
+        return [], f"Unknown domain id(s): {unknown}"
+
+    return resolved, None
+
+
 def import_projects(
     *,
     db: Session,
@@ -135,7 +178,7 @@ def import_projects(
         raise ValueError(f"Missing required column(s): {', '.join(sorted(missing_required))}")
 
     domains = db.execute(select(models.Domain)).scalars().all()
-    domain_ids = {domain.id for domain in domains}
+    all_domain_ids = {domain.id for domain in domains}
     domain_name_map = {domain.name.strip().lower(): domain.id for domain in domains}
 
     professors = db.execute(select(models.Professor)).scalars().all()
@@ -161,30 +204,16 @@ def import_projects(
             issues.append({"row_number": idx, "student": student_ref, "reason": "Missing title"})
             continue
 
-        domain_id = _to_int(row.get("domain_id"))
-        domain_name = _to_clean_str(row.get("domain_name"))
-        if domain_id is None and domain_name:
-            domain_id = domain_name_map.get(domain_name.lower())
-        if domain_id is None and default_domain_id is not None:
-            domain_id = default_domain_id
-        if domain_id is None:
-            issues.append(
-                {
-                    "row_number": idx,
-                    "student": student_ref,
-                    "reason": "Missing domain_id or domain_name",
-                }
-            )
-            continue
-        if domain_id not in domain_ids:
-            issues.append(
-                {
-                    "row_number": idx,
-                    "student": student_ref,
-                    "reason": f"Unknown domain_id: {domain_id}",
-                }
-            )
-            continue
+        resolved_domain_ids, domain_err = _resolve_domain_ids(
+            raw_names=_to_clean_str(row.get("domain_names")),
+            raw_ids=_to_clean_str(row.get("domain_id")),
+            domain_name_map=domain_name_map,
+            all_domain_ids=all_domain_ids,
+            default_domain_id=default_domain_id,
+        )
+        if domain_err:
+            # Fall back to auto-mapping from the project title
+            resolved_domain_ids = infer_domain_ids(title, db)
 
         supervisor_id = _to_int(row.get("supervisor_id"))
         supervisor_email = _to_clean_str(row.get("supervisor_email"))
@@ -241,7 +270,7 @@ def import_projects(
         projects_to_insert.append(
             models.Project(
                 title=title,
-                domain_id=domain_id,
+                domain_ids=resolved_domain_ids,
                 supervisor_id=supervisor_id,
                 student_id=student_id,
             )

@@ -33,6 +33,7 @@ def build_solver_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
         {
             "id": p["id"],
             "domain_id": p["domain_id"],
+            "department_id": p.get("department_id", 0),
             "max_juries": p["max_juries"],
         }
         for p in snapshot.get("professors", [])
@@ -40,9 +41,12 @@ def build_solver_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
     projects = [
         {
             "id": p["id"],
-            "domain_id": p["domain_id"],
+            "domain_ids": list(p.get("domain_ids") or []),
+            "domain_id": (p.get("domain_ids") or [0])[0],
             "domain_keywords": list(p.get("domain_keywords") or []),
             "supervisor_id": p["supervisor_id"],
+            "student_filiere_id": p.get("student_filiere_id", 0),
+            "filiere_department_id": p.get("filiere_department_id", 0),
         }
         for p in snapshot.get("projects", [])
     ]

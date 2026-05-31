@@ -302,9 +302,9 @@ def seed(conn, csv_path: Path) -> None:
                 continue
 
             cur.execute(
-                "INSERT INTO project (title, domain_id, supervisor_id, student_id)"
+                "INSERT INTO project (title, domain_ids, supervisor_id, student_id)"
                 " VALUES (%s, %s, %s, %s)",
-                (title, domain_ids[code], sup_id, stu_id),
+                (title, [domain_ids[code]], sup_id, stu_id),
             )
             inserted_projects += 1
 

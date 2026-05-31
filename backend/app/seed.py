@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.db import SessionLocal
+from app.db import Base, SessionLocal, engine
 from app.models import (
     Assignment,
     Conflict,
@@ -28,6 +28,54 @@ from app.models import (
     Student,
     Unavailability,
 )
+
+CANONICAL_DOMAINS = [
+    "Artificial Intelligence",
+    "Machine Learning",
+    "Data Science",
+    "Data Engineering",
+    "Internet of Things",
+    "Security",
+    "Cloud",
+    "DevOps",
+    "Web Development",
+    "Mobile",
+    "Blockchain",
+    "Networking",
+    "Embedded Systems",
+    "Natural Language Processing",
+    "Computer Vision",
+    "Databases",
+    "Human-Computer Interaction",
+    "Bioinformatics",
+    "Finance",
+    "Healthcare",
+    "Robotics",
+    "Distributed Systems",
+    "Software Engineering",
+    "Deep Learning",
+    "Big Data",
+    "MLOps",
+    "Edge Computing",
+    "Quantum Computing",
+    "Computer Graphics",
+    "Augmented Reality",
+    "Virtual Reality",
+    "Game Development",
+    "Information Retrieval",
+    "Operating Systems",
+    "Compilers",
+    "Formal Methods",
+    "Algorithm Design",
+    "Digital Twins",
+    "Simulation",
+    "Autonomous Systems",
+    "FinTech",
+]
+
+
+def create_tables() -> None:
+    Base.metadata.create_all(engine)
 
 
 def clear_all(db: Session) -> None:
@@ -51,6 +99,22 @@ def clear_all(db: Session) -> None:
 def already_seeded(db: Session) -> bool:
     first_filiere = db.execute(select(Filiere.id).limit(1)).scalar_one_or_none()
     return first_filiere is not None
+
+
+def seed_canonical_domains(db: Session) -> dict[str, Domain]:
+    """Insert canonical domains (idempotent) and return name -> Domain mapping."""
+    domains: dict[str, Domain] = {}
+    for name in CANONICAL_DOMAINS:
+        existing = db.execute(select(Domain).where(Domain.name == name)).scalar_one_or_none()
+        if existing:
+            domains[name] = existing
+        else:
+            domain = Domain(name=name)
+            db.add(domain)
+            db.flush()
+            domains[name] = domain
+    db.flush()
+    return domains
 
 
 _MONTHS = {
@@ -145,19 +209,24 @@ def _time_to_minutes(time_value: str | None) -> int:
     return int(hour) * 60 + int(minute)
 
 
+def _time_to_datetime(
+    date: dt.date, time_value: str | None, duration_hours: int = 1
+) -> tuple[dt.datetime, dt.datetime]:
+    if time_value:
+        hour, minute = time_value.split(":")
+        start = dt.datetime(date.year, date.month, date.day, int(hour), int(minute))
+    else:
+        start = dt.datetime(date.year, date.month, date.day, 8, 0)
+    end = start + dt.timedelta(hours=duration_hours)
+    return start, end
+
+
 # Permitted jury hours: 08:00–11:59 (morning) and 13:00–16:59 (afternoon).
 # Lunch break (12:xx) and outside-hours (<08:00, ≥17:00) are never allowed.
 _MORNING_START = 8 * 60    # 08:00 in minutes
 _MORNING_END   = 12 * 60   # 12:00 exclusive
 _AFTERNOON_START = 13 * 60 # 13:00
 _AFTERNOON_END   = 17 * 60 # 17:00 exclusive
-
-
-def _period_from_time(time_value: str | None) -> str:
-    if not time_value:
-        return "morning"
-    hour = int(time_value.split(":")[0])
-    return "morning" if hour < 12 else "afternoon"
 
 
 def _is_valid_slot(date: dt.date | None, time_value: str | None) -> bool:
@@ -230,15 +299,23 @@ def seed_from_pfe_data(
             continue
         key = domain_name.lower()
         if key not in domains:
-            domain = Domain(name=domain_name)
+            existing = db.execute(select(Domain).where(Domain.name == domain_name)).scalar_one_or_none()
+            if existing:
+                domains[key] = existing
+            else:
+                domain = Domain(name=domain_name)
+                db.add(domain)
+                db.flush()
+                domains[key] = domain
+    if "pfe" not in domains:
+        existing = db.execute(select(Domain).where(Domain.name == "PFE")).scalar_one_or_none()
+        if existing:
+            domains["pfe"] = existing
+        else:
+            domain = Domain(name="PFE")
             db.add(domain)
             db.flush()
-            domains[key] = domain
-    if "pfe" not in domains:
-        domain = Domain(name="PFE")
-        db.add(domain)
-        db.flush()
-        domains["pfe"] = domain
+            domains["pfe"] = domain
 
     session_ranges: dict[str, dict[str, dt.date]] = {}
     for record in records:
@@ -382,7 +459,7 @@ def seed_from_pfe_data(
         if project_key not in projects:
             project = Project(
                 title=project_title,
-                domain_id=domain.id,
+                domain_ids=[domain.id],
                 supervisor_id=supervisor.id,
                 student_id=student.id,
             )
@@ -410,9 +487,10 @@ def seed_from_pfe_data(
             counter_key = (session.id, item["date"], item["room"])
             slot_number = slot_counters.get(counter_key, 0) + 1
             slot_counters[counter_key] = slot_number
+            start_dt, end_dt = _time_to_datetime(item["date"], item["time"])
             slot = Slot(
-                date=item["date"],
-                period=_period_from_time(item["time"]),
+                start_time=start_dt,
+                end_time=end_dt,
                 slot_number=slot_number,
                 room_id=get_or_create_room(item["room"]).id,
                 session_id=session.id,
@@ -445,17 +523,17 @@ def seed(db: Session) -> None:
     db.add_all([filiere_cs, filiere_ds])
     db.flush()
 
-    domain_ai = Domain(name="Artificial Intelligence")
-    domain_se = Domain(name="Software Engineering")
-    domain_da = Domain(name="Data Analytics")
-    db.add_all([domain_ai, domain_se, domain_da])
-    db.flush()
+    # Seed all canonical domains and reference the ones used in sample data.
+    domains = seed_canonical_domains(db)
+    domain_ai = domains["Artificial Intelligence"]
+    domain_ml = domains["Machine Learning"]
+    domain_ds = domains["Data Science"]
 
     db.add_all(
         [
             DepartmentDomain(department_id=dep_cs.id, domain_id=domain_ai.id),
-            DepartmentDomain(department_id=dep_cs.id, domain_id=domain_se.id),
-            DepartmentDomain(department_id=dep_ds.id, domain_id=domain_da.id),
+            DepartmentDomain(department_id=dep_cs.id, domain_id=domain_ml.id),
+            DepartmentDomain(department_id=dep_ds.id, domain_id=domain_ds.id),
         ]
     )
 
@@ -486,8 +564,8 @@ def seed(db: Session) -> None:
     db.add_all(
         [
             ProfessorDomain(professor_id=prof_a.id, domain_id=domain_ai.id),
-            ProfessorDomain(professor_id=prof_b.id, domain_id=domain_da.id),
-            ProfessorDomain(professor_id=prof_c.id, domain_id=domain_se.id),
+            ProfessorDomain(professor_id=prof_b.id, domain_id=domain_ds.id),
+            ProfessorDomain(professor_id=prof_c.id, domain_id=domain_ml.id),
         ]
     )
 
@@ -514,13 +592,13 @@ def seed(db: Session) -> None:
 
     project_a = Project(
         title="Adaptive Jury Scheduling",
-        domain_id=domain_ai.id,
+        domain_ids=[domain_ai.id],
         supervisor_id=prof_a.id,
         student_id=student_a.id,
     )
     project_b = Project(
         title="Learning Analytics Dashboard",
-        domain_id=domain_da.id,
+        domain_ids=[domain_ds.id],
         supervisor_id=prof_b.id,
         student_id=student_b.id,
     )
@@ -534,15 +612,15 @@ def seed(db: Session) -> None:
 
     # Morning 08:00–09:00 on Monday June 22; afternoon 13:00–14:00 on Tuesday June 23.
     slot_1 = Slot(
-        date=dt.date(2026, 6, 22),
-        period="morning",
+        start_time=dt.datetime(2026, 6, 22, 8, 0),
+        end_time=dt.datetime(2026, 6, 22, 9, 0),
         slot_number=1,
         room_id=room_a.id,
         session_id=session_1.id,
     )
     slot_2 = Slot(
-        date=dt.date(2026, 6, 23),
-        period="afternoon",
+        start_time=dt.datetime(2026, 6, 23, 13, 0),
+        end_time=dt.datetime(2026, 6, 23, 14, 0),
         slot_number=1,
         room_id=room_b.id,
         session_id=session_2.id,
@@ -610,7 +688,7 @@ def seed(db: Session) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Seed database with sample data.")
+    parser = argparse.ArgumentParser(description="Create database tables and seed with data.")
     parser.add_argument(
         "--reset",
         action="store_true",
@@ -628,12 +706,28 @@ def main() -> None:
         default="insat.tn",
         help="Domain for generated student/professor emails when seeding PFE data.",
     )
+    parser.add_argument(
+        "--domains-only",
+        action="store_true",
+        help="Only create tables and seed canonical domains, skip sample data.",
+    )
     args = parser.parse_args()
+
+    print("Creating database tables...")
+    create_tables()
+    print("Tables created (or already exist).")
 
     with SessionLocal() as db:
         if args.reset:
             clear_all(db)
             db.commit()
+            print("Existing data cleared.")
+
+        if args.domains_only:
+            seed_canonical_domains(db)
+            db.commit()
+            print("Canonical domains seeded.")
+            return
 
         if args.pfe_data:
             if not args.reset and already_seeded(db):

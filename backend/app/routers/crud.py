@@ -12,6 +12,7 @@ from app import models, schemas
 from app.services.professor_import import import_professors
 from app.services.project_import import import_projects
 from app.services.student_import import import_students
+from app.services.domain_mapping import infer_domain_ids
 
 
 def build_crud_router(
@@ -22,12 +23,15 @@ def build_crud_router(
     out_schema: type[BaseModel],
     path: str,
     tag: str,
+    before_create=None,  # optional: (data: dict, db: Session) -> None
 ):
     router = APIRouter(prefix=path, tags=[tag])
 
     @router.post("", response_model=out_schema, status_code=status.HTTP_201_CREATED, name=f"create_{tag}")
     def create_item(payload: dict[str, Any] = Body(...), db: Session = Depends(get_db)):
         data = create_schema.model_validate(payload).model_dump()
+        if before_create is not None:
+            before_create(data, db)
         obj = model(**data)
         db.add(obj)
         db.commit()
@@ -259,6 +263,11 @@ def generate_slots(
     )
 
 
+def _project_before_create(data: dict, db: Session) -> None:
+    if not data.get("domain_ids"):
+        data["domain_ids"] = infer_domain_ids(data.get("title", ""), db)
+
+
 project_router = build_crud_router(
     model=models.Project,
     create_schema=schemas.ProjectCreate,
@@ -266,6 +275,7 @@ project_router = build_crud_router(
     out_schema=schemas.ProjectOut,
     path="/projects",
     tag="projects",
+    before_create=_project_before_create,
 )
 
 

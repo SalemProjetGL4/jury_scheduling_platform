@@ -69,23 +69,33 @@ def build_soft_terms(
                     tokens.add(token)
         return tokens
 
-    # Professors now expose a single `domain_id`; no domain_ids list.
-    expertise_terms: list[cp_model.IntVar] = []
+    # Build expertise terms with domain-first, then filiere (department) preference.
+    expertise_terms: list[cp_model.LinearExpr] = []
     for pid in professor_ids:
+        prof = professor_by_id.get(pid, {})
+        prof_domain = prof.get("domain_id")
+        prof_dept = prof.get("department_id")
         for pr_id in project_ids:
-            project_domain = project_by_id[pr_id].get("domain_id")
-            if not project_domain:
+            project = project_by_id.get(pr_id, {})
+            # Handle multi-domain projects: prefer any professor domain in project.domain_ids
+            project_domain_ids = set(project.get("domain_ids") or ([] if project.get("domain_id") is None else [project.get("domain_id")]))
+            if not project_domain_ids:
                 continue
 
-            professor_domain = professor_by_id[pid].get("domain_id")
-            # If professor has no domain, it's a mismatch -> add penalty terms
-            if not professor_domain or project_domain != professor_domain:
-                for role in ("PRESIDENT", "EXAMINER"):
-                    for session in sessions:
-                        expertise_terms.append(vars_.x[(pid, pr_id, role, session["id"])])
+            project_filiere_dept = project.get("filiere_department_id")
+
             for role in ("PRESIDENT", "EXAMINER"):
                 for session in sessions:
-                    expertise_terms.append(vars_.x[(pid, pr_id, role, session["id"])])
+                    var = vars_.x.get((pid, pr_id, role, session["id"]))
+                    if var is None:
+                        continue
+                    # Domain mismatch -> heavier penalty (count as 2)
+                    if not prof_domain or prof_domain not in project_domain_ids:
+                        expertise_terms.append(2 * var)
+                    else:
+                        # Domain matches; penalize if professor's department != student's filiere department
+                        if project_filiere_dept and prof_dept != project_filiere_dept:
+                            expertise_terms.append(var)
 
     expertise_penalty = sum(expertise_terms) if expertise_terms else 0
 

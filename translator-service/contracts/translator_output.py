@@ -32,7 +32,8 @@ class ProfessorPayload(BaseModel):
 
 class ProjectPayload(BaseModel):
     id: int
-    domain_id: int
+    domain_id: int = 0
+    domain_ids: list[int] = Field(default_factory=list)
     domain_keywords: list[str] = Field(default_factory=list)
     supervisor_id: int
 

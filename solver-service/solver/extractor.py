@@ -252,7 +252,7 @@ def evaluate_soft_constraint_violations(
         proj = project_by_id.get(proj_id)
         if not proj:
             continue
-        project_domain = proj.get("domain_id")
+        project_domain_ids = set(proj.get("domain_ids") or ([] if proj.get("domain_id") is None else [proj.get("domain_id")]))
         for role_key in ("president", "examiner"):
             pid = assignment.get("roles", {}).get(role_key)
             if pid is None:
@@ -261,9 +261,17 @@ def evaluate_soft_constraint_violations(
             if not prof:
                 continue
             prof_domain = prof.get("domain_id")
-            # If professor has no single domain_id, treat as mismatch
-            if not prof_domain or project_domain != prof_domain:
-                expertise_violation += 1
+            prof_dept = prof.get("department_id")
+            proj_filiere_dept = proj.get("filiere_department_id")
+            # Domain-first matching: domain mismatch is more severe; if domain matches,
+            # prefer professor in same filiere's department.
+            if not prof_domain or prof_domain not in project_domain_ids:
+                # domain mismatch — count as 2
+                expertise_violation += 2
+            else:
+                # domain matches; penalize if professor's department != student's filière department
+                if proj_filiere_dept and prof_dept != proj_filiere_dept:
+                    expertise_violation += 1
 
     expertise_w = normalize_weight(weights.get("expertise", 5), default=5)
     if expertise_violation > 0:

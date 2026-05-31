@@ -723,7 +723,11 @@ function ProjetsTab() {
                       title={p.title}>{p.title}</td>
                     <td style={{ ...tdStyle, color: '#64748b' }}>#{p.student_id}</td>
                     <td style={{ ...tdStyle, color: '#64748b' }}>#{p.supervisor_id}</td>
-                    <td style={{ ...tdStyle, color: '#64748b' }}>#{p.domain_id}</td>
+                    <td style={{ ...tdStyle, color: '#64748b' }}>
+                      {(p.domain_ids || []).map(id => (
+                        <span key={id} style={{ display: 'inline-block', background: '#eff6ff', color: '#1d4ed8', fontSize: '11px', padding: '1px 6px', borderRadius: '99px', border: '0.5px solid #bfdbfe', marginRight: '3px' }}>#{id}</span>
+                      ))}
+                    </td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
                       <button style={{ ...btnIcon, color: '#ef4444' }} onClick={() => handleDelete(p)} title="Supprimer">
                         <Trash2 size={14} />
