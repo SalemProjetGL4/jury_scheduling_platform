@@ -77,6 +77,9 @@ class ProjectBase(BaseModel):
     domain_ids: list[int]
     supervisor_id: int
     student_id: int
+    session_id: int
+    enterprise: str | None = None
+    enterprise_supervisor: str | None = None
 
 
 class ProjectCreate(ProjectBase):
@@ -88,10 +91,14 @@ class ProjectUpdate(BaseModel):
     domain_ids: list[int] | None = None
     supervisor_id: int | None = None
     student_id: int | None = None
+    session_id: int | None = None
+    enterprise: str | None = None
+    enterprise_supervisor: str | None = None
 
 
 class ProjectOut(ProjectBase, ORMBase):
     id: int
+    session_id: int | None = None
 
 
 # ── Assignment ────────────────────────────────────────────────────────────────

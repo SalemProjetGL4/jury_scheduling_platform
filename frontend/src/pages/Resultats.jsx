@@ -547,13 +547,13 @@ export default function Resultats() {
         <table className="min-w-full text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50">
-              {['Solution', 'Score', 'Conflits', 'Jours', 'Salles', 'Soutenances', 'Explication', 'Actions'].map(h => (
+              {['Solution', 'Score', 'Conflits', 'Jours', 'Salles', 'Soutenances', 'Actions'].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td className="px-4 py-10 text-center text-gray-400" colSpan={8}>Chargement…</td></tr>}
+            {loading && <tr><td className="px-4 py-10 text-center text-gray-400" colSpan={7}>Chargement…</td></tr>}
             {!loading && solutions.length === 0 && (() => {
               const solverStatus = wfSolverResult?.status
               const finalStatus  = workflowResult?.final_status
@@ -562,7 +562,7 @@ export default function Resultats() {
 
               if (solverStatus === 'INFEASIBLE') return (
                 <tr>
-                  <td colSpan={8}>
+                  <td colSpan={7}>
                     <div className="px-6 py-8 space-y-3">
                       <div className="flex items-center gap-2 text-red-600">
                         <AlertTriangle size={18} />
@@ -596,7 +596,7 @@ export default function Resultats() {
 
               if (finalStatus === 'error' || wfErrors.length > 0) return (
                 <tr>
-                  <td colSpan={8}>
+                  <td colSpan={7}>
                     <div className="px-6 py-8 space-y-3">
                       <div className="flex items-center gap-2 text-orange-600">
                         <AlertTriangle size={18} />
@@ -620,7 +620,7 @@ export default function Resultats() {
 
               return (
                 <tr>
-                  <td colSpan={8}>
+                  <td colSpan={7}>
                     <div className="flex flex-col items-center justify-center py-12 gap-3">
                       <CalendarDays size={36} className="text-gray-300" />
                       <p className="text-sm font-medium text-gray-500">Aucun résultat disponible</p>
@@ -650,11 +650,7 @@ export default function Resultats() {
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.jours}</td>
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.salles}</td>
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.soutenances}</td>
-                <td className="px-4 py-3 text-gray-600 max-w-[22rem]">
-                  <span className="block text-xs leading-5 text-gray-500 whitespace-normal break-words">
-                    {sol.reflectorExplanation || '—'}
-                  </span>
-                </td>
+
                 <td className="px-4 py-3 whitespace-nowrap">
                   <div className="flex gap-1.5">
                     <button

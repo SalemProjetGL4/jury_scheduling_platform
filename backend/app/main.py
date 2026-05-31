@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
+from app.db import engine
 from app.routers.crud import (
     assignment_router,
     conflict_router,
@@ -17,6 +19,22 @@ from app.routers.crud import (
 )
 
 app = FastAPI(title="PFA Backend API", version="0.1.0")
+
+
+@app.on_event("startup")
+def _apply_project_migrations() -> None:
+    with engine.connect() as conn:
+        conn.execute(text(
+            "ALTER TABLE project ADD COLUMN IF NOT EXISTS enterprise TEXT"
+        ))
+        conn.execute(text(
+            "ALTER TABLE project ADD COLUMN IF NOT EXISTS enterprise_supervisor TEXT"
+        ))
+        conn.execute(text(
+            "ALTER TABLE project ADD COLUMN IF NOT EXISTS session_id BIGINT "
+            "REFERENCES session(id) ON DELETE SET NULL"
+        ))
+        conn.commit()
 
 app.add_middleware(
     CORSMiddleware,

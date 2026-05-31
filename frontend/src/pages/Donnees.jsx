@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Users, Calendar, DoorOpen, FileText,
   Pencil, Trash2, Loader2, Plus, Search, X, Upload,
+  Clock, AlertTriangle,
 } from 'lucide-react'
 import { apiRequest } from '../services/api'
 
@@ -579,24 +580,50 @@ function SallesTab() {
 // ── Tab 4: Projets ────────────────────────────────────────────────────────────
 
 function ProjetsTab() {
-  const [projects, setProjects]       = useState([])
-  const [loading, setLoading]         = useState(true)
-  const [uploading, setUploading]     = useState(false)
-  const [uploadResult, setUploadResult] = useState(null)
-  const [uploadError, setUploadError] = useState('')
-  const [selectedFile, setSelectedFile] = useState(null)
-  const [search, setSearch]           = useState('')
+  const [projects, setProjects]                   = useState([])
+  const [sessions, setSessions]                   = useState([])
+  const [loading, setLoading]                     = useState(true)
+  const [uploading, setUploading]                 = useState(false)
+  const [uploadResult, setUploadResult]           = useState(null)
+  const [uploadError, setUploadError]             = useState('')
+  const [selectedFile, setSelectedFile]           = useState(null)
+  const [selectedSessionId, setSelectedSessionId] = useState('')
+  const [filterSessionId, setFilterSessionId]     = useState('')
+  const [search, setSearch]                       = useState('')
+  const [professors, setProfessors]               = useState([])
+  const [students, setStudents]                   = useState([])
+  const [domains, setDomains]                     = useState([])
+  const [selectedProjectIds, setSelectedProjectIds] = useState(new Set())
+  const [deleting, setDeleting]                   = useState(false)
+  const [deleteResult, setDeleteResult]           = useState('')
+  const headerCheckboxRef                         = useRef(null)
 
-  useEffect(() => { loadProjects() }, [])
+  useEffect(() => {
+    Promise.all([
+      apiRequest('/projects?limit=200').catch(() => []),
+      apiRequest('/sessions?limit=50').catch(() => []),
+      apiRequest('/professors?limit=200').catch(() => []),
+      apiRequest('/students?limit=200').catch(() => []),
+      apiRequest('/domains?limit=200').catch(() => []),
+    ]).then(([projData, sessData, profData, studData, domData]) => {
+      setProjects(Array.isArray(projData) ? projData : [])
+      setSessions(Array.isArray(sessData) ? sessData : [])
+      setProfessors(Array.isArray(profData) ? profData : [])
+      setStudents(Array.isArray(studData) ? studData : [])
+      setDomains(Array.isArray(domData) ? domData : [])
+    }).finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    setSelectedProjectIds(new Set())
+    setDeleteResult('')
+  }, [filterSessionId])
 
   async function loadProjects() {
-    setLoading(true)
     try {
       const data = await apiRequest('/projects?limit=200')
       setProjects(Array.isArray(data) ? data : [])
-    } catch { /* silent */ } finally {
-      setLoading(false)
-    }
+    } catch { /* silent */ }
   }
 
   function handleSelectFile(e) {
@@ -606,11 +633,13 @@ function ProjetsTab() {
   }
 
   async function handleImport() {
+    if (!selectedSessionId) { setUploadError('Veuillez sélectionner une session.'); return }
     if (!selectedFile) { setUploadError('Choisissez un fichier.'); return }
     setUploading(true)
     setUploadError('')
     const fd = new FormData()
     fd.append('file', selectedFile)
+    fd.append('session_id', selectedSessionId)
     try {
       const report = await apiRequest('/projects/import', { method: 'POST', body: fd })
       setUploadResult(report)
@@ -631,9 +660,72 @@ function ProjetsTab() {
     } catch (e) { alert(e.message || 'Erreur') }
   }
 
-  const filtered = projects.filter(p =>
-    p.title.toLowerCase().includes(search.toLowerCase())
+  function handleHeaderCheckbox() {
+    if (allVisibleSelected) {
+      setSelectedProjectIds(prev => {
+        const next = new Set(prev)
+        visibleIds.forEach(id => next.delete(id))
+        return next
+      })
+    } else {
+      setSelectedProjectIds(prev => new Set([...prev, ...visibleIds]))
+    }
+  }
+
+  function toggleProjectSelection(id) {
+    setSelectedProjectIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function selectAllInSession() {
+    const sid = parseInt(filterSessionId, 10)
+    setSelectedProjectIds(new Set(projects.filter(p => p.session_id === sid).map(p => p.id)))
+  }
+
+  async function handleBulkDelete() {
+    const n = selectedProjectIds.size
+    if (!window.confirm(`Supprimer ${n} projet(s) sélectionné(s) ? Cette action est irréversible.`)) return
+    setDeleting(true)
+    setDeleteResult('')
+    try {
+      await Promise.all([...selectedProjectIds].map(id =>
+        apiRequest(`/projects/${id}`, { method: 'DELETE' })
+      ))
+      await loadProjects()
+      setSelectedProjectIds(new Set())
+      setDeleteResult(`${n} projet(s) supprimé(s).`)
+    } catch (e) {
+      alert(e.message || 'Erreur lors de la suppression')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const sortedSessions = [...sessions].sort((a, b) =>
+    (b.start_date || '').localeCompare(a.start_date || '')
   )
+
+  const professorMap = Object.fromEntries(professors.map(p => [p.id, p.name]))
+  const studentMap   = Object.fromEntries(students.map(s => [s.id, s.name]))
+  const domainMap    = Object.fromEntries(domains.map(d => [d.id, d.name]))
+  const sessionMap   = Object.fromEntries(sessions.map(s => [s.id, `Session ${s.id} — ${s.start_date}`]))
+
+  const filtered = projects
+    .filter(p => filterSessionId === '' || p.session_id === parseInt(filterSessionId, 10))
+    .filter(p => p.title.toLowerCase().includes(search.toLowerCase()))
+
+  const visibleIds = filtered.map(p => p.id)
+  const selectedVisibleCount = visibleIds.filter(id => selectedProjectIds.has(id)).length
+  const allVisibleSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length
+
+  useEffect(() => {
+    if (!headerCheckboxRef.current) return
+    headerCheckboxRef.current.indeterminate = selectedVisibleCount > 0 && !allVisibleSelected
+  }, [selectedProjectIds, filtered])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -642,8 +734,35 @@ function ProjetsTab() {
       <div style={cardStyle}>
         <h3 style={sectionTitle}>Importer les projets</h3>
         <p style={sectionSub}>
-          Format attendu : <code style={{ background: '#f1f5f9', padding: '1px 5px', borderRadius: '4px', fontSize: '11px' }}>title, domain_name, supervisor_email, student_email</code>
+          Colonnes requises :&nbsp;
+          <code style={{ background: '#f1f5f9', padding: '1px 5px', borderRadius: '4px', fontSize: '11px' }}>
+            student_name, student_email, filiere, project_title, domain, supervisor_name
+          </code>
+          <br />
+          Colonnes optionnelles :&nbsp;
+          <code style={{ background: '#f1f5f9', padding: '1px 5px', borderRadius: '4px', fontSize: '11px' }}>
+            enterprise, enterprise_supervisor
+          </code>
+          <br />
+          Formats acceptés : .csv, .xlsx — Le superviseur doit exister dans la base de données (recherche par nom exact).
         </p>
+
+        {/* Session selector */}
+        <div style={{ marginBottom: '12px' }}>
+          <label style={labelStyle}>Session</label>
+          <select
+            value={selectedSessionId}
+            onChange={e => { setSelectedSessionId(e.target.value); setUploadError('') }}
+            style={inputStyle}
+          >
+            <option value="">— Sélectionner une session —</option>
+            {sortedSessions.map(s => (
+              <option key={s.id} value={s.id}>
+                Session {s.id} — {s.start_date} → {s.end_date}
+              </option>
+            ))}
+          </select>
+        </div>
 
         {selectedFile ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#f8fafc', border: '0.5px solid #e2e8f0', borderRadius: '6px', padding: '10px 14px', marginBottom: '12px' }}>
@@ -665,13 +784,22 @@ function ProjetsTab() {
           </label>
         )}
 
-        <InlineError   msg={uploadError} />
+        <InlineError msg={uploadError} />
+
         {uploadResult && (
-          <InlineSuccess msg={[
-            `✓ ${uploadResult.inserted_count ?? 0} projet(s) importé(s)`,
-            uploadResult.skipped_duplicates > 0 && `${uploadResult.skipped_duplicates} doublon(s) ignoré(s)`,
-            uploadResult.invalid_rows > 0       && `${uploadResult.invalid_rows} ligne(s) rejetée(s)`,
-          ].filter(Boolean).join(' · ')} />
+          <div style={{ marginTop: '8px' }}>
+            <InlineSuccess msg={`✓ ${uploadResult.created ?? 0} projet(s) créé(s)${(uploadResult.skipped ?? 0) > 0 ? ` · ${uploadResult.skipped} ligne(s) ignorée(s)` : ''}`} />
+            {uploadResult.issues && uploadResult.issues.length > 0 && (
+              <div style={{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                {uploadResult.issues.map((issue, i) => (
+                  <div key={i} style={{ color: '#92400e', fontSize: '12px', background: '#fffbeb', border: '0.5px solid #fde68a', borderRadius: '6px', padding: '6px 12px', display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+                    <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: '1px' }} />
+                    {issue}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
         <div style={{ marginTop: '12px' }}>
@@ -700,35 +828,106 @@ function ProjetsTab() {
           </div>
         </div>
 
+        {/* Session filter */}
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', marginBottom: '12px' }}>
+          <div style={{ flex: '0 0 300px' }}>
+            <label style={labelStyle}>Filtrer par session</label>
+            <select
+              value={filterSessionId}
+              onChange={e => setFilterSessionId(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">Toutes les sessions</option>
+              {sortedSessions.map(s => (
+                <option key={s.id} value={s.id}>
+                  Session {s.id} — {s.start_date} → {s.end_date}
+                </option>
+              ))}
+            </select>
+          </div>
+          <span style={{ fontSize: '12px', color: '#94a3b8', paddingBottom: '8px' }}>
+            {filtered.length} projet(s) affiché(s)
+          </span>
+          {filterSessionId && (
+            <button
+              onClick={selectAllInSession}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px', color: '#2563eb', fontWeight: 500, paddingBottom: '8px' }}
+            >
+              Tout sélectionner ({projects.filter(p => p.session_id === parseInt(filterSessionId, 10)).length})
+            </button>
+          )}
+        </div>
+
+        {deleteResult && <InlineSuccess msg={`✓ ${deleteResult}`} />}
+
+        {selectedProjectIds.size > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', background: '#fef9c3', border: '0.5px solid #fde047', borderRadius: '6px', marginBottom: '12px' }}>
+            <span style={{ fontSize: '13px', color: '#713f12', fontWeight: 500 }}>
+              {selectedProjectIds.size} projet(s) sélectionné(s)
+            </span>
+            <button
+              onClick={handleBulkDelete}
+              disabled={deleting}
+              style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 12px', fontSize: '12px', fontWeight: 500, cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.7 : 1, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+            >
+              <Trash2 size={13} />
+              {deleting ? 'Suppression en cours…' : 'Supprimer la sélection'}
+            </button>
+            <button
+              onClick={() => setSelectedProjectIds(new Set())}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px', color: '#92400e' }}
+            >
+              Désélectionner tout
+            </button>
+          </div>
+        )}
+
         {loading ? <CenteredSpinner /> : (
           <div style={{ background: '#fff', border: '0.5px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
             <table style={tableStyle}>
               <thead>
                 <tr>
+                  <th style={{ ...thStyle, width: '36px', textAlign: 'center' }}>
+                    <input
+                      type="checkbox"
+                      ref={headerCheckboxRef}
+                      checked={allVisibleSelected}
+                      onChange={handleHeaderCheckbox}
+                      style={{ cursor: 'pointer' }}
+                    />
+                  </th>
                   <th style={thStyle}>Titre</th>
                   <th style={thStyle}>Étudiant</th>
                   <th style={thStyle}>Superviseur</th>
                   <th style={thStyle}>Domaine</th>
+                  <th style={thStyle}>Session</th>
                   <th style={thStyle} />
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={5} style={{ ...tdStyle, textAlign: 'center', color: '#94a3b8' }}>Aucun projet</td></tr>
+                  <tr><td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#94a3b8' }}>Aucun projet</td></tr>
                 ) : filtered.map(p => (
                   <tr key={p.id}
-                    onMouseEnter={e => { e.currentTarget.style.background = '#f8fafc' }}
-                    onMouseLeave={e => { e.currentTarget.style.background = '' }}>
+                    onClick={() => toggleProjectSelection(p.id)}
+                    style={{ cursor: 'pointer' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = selectedProjectIds.has(p.id) ? '#eff6ff' : '#f8fafc' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = selectedProjectIds.has(p.id) ? '#eff6ff' : '' }}>
+                    <td style={{ ...tdStyle, width: '36px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedProjectIds.has(p.id)}
+                        onChange={() => toggleProjectSelection(p.id)}
+                        style={{ cursor: 'pointer' }}
+                      />
+                    </td>
                     <td style={{ ...tdStyle, maxWidth: '320px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}
                       title={p.title}>{p.title}</td>
-                    <td style={{ ...tdStyle, color: '#64748b' }}>#{p.student_id}</td>
-                    <td style={{ ...tdStyle, color: '#64748b' }}>#{p.supervisor_id}</td>
-                    <td style={{ ...tdStyle, color: '#64748b' }}>
-                      {(p.domain_ids || []).map(id => (
-                        <span key={id} style={{ display: 'inline-block', background: '#eff6ff', color: '#1d4ed8', fontSize: '11px', padding: '1px 6px', borderRadius: '99px', border: '0.5px solid #bfdbfe', marginRight: '3px' }}>#{id}</span>
-                      ))}
-                    </td>
-                    <td style={{ ...tdStyle, textAlign: 'right' }}>
+                    <td style={{ ...tdStyle, color: '#64748b' }}>{studentMap[p.student_id] ?? `#${p.student_id}`}</td>
+                    <td style={{ ...tdStyle, color: '#64748b' }}>{professorMap[p.supervisor_id] ?? `#${p.supervisor_id}`}</td>
+                    <td style={{ ...tdStyle, color: '#64748b' }}>{domainMap[p.domain_id] ?? `#${p.domain_id}`}</td>
+                    <td style={{ ...tdStyle, color: '#64748b' }}>{sessionMap[p.session_id] ?? '—'}</td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
                       <button style={{ ...btnIcon, color: '#ef4444' }} onClick={() => handleDelete(p)} title="Supprimer">
                         <Trash2 size={14} />
                       </button>
@@ -744,13 +943,341 @@ function ProjetsTab() {
   )
 }
 
+// ── Tab 5: Indisponibilités ───────────────────────────────────────────────────
+
+const PERIOD_LABELS = { morning: 'Matin', afternoon: 'Après-midi', full_day: 'Journée entière' }
+const UNAVAIL_EMPTY = { professor_id: '', date: '', period: 'morning' }
+
+function IndisponibilitesTab() {
+  const [unavailabilities, setUnavailabilities] = useState([])
+  const [professors, setProfessors]             = useState([])
+  const [loading, setLoading]                   = useState(true)
+  const [error, setError]                       = useState('')
+  const [showForm, setShowForm]                 = useState(false)
+  const [form, setForm]                         = useState(UNAVAIL_EMPTY)
+  const [formError, setFormError]               = useState('')
+  const [saving, setSaving]                     = useState(false)
+
+  useEffect(() => { load() }, [])
+
+  async function load() {
+    setLoading(true)
+    setError('')
+    try {
+      const [uData, pData] = await Promise.all([
+        apiRequest('/unavailabilities?limit=200'),
+        apiRequest('/professors?limit=200'),
+      ])
+      setUnavailabilities(Array.isArray(uData) ? uData : [])
+      setProfessors(Array.isArray(pData) ? pData : [])
+    } catch (e) {
+      setError(e.message || 'Erreur de chargement')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function openAdd() { setForm(UNAVAIL_EMPTY); setFormError(''); setShowForm(true) }
+  function closeForm() { setShowForm(false); setFormError('') }
+
+  async function handleSave() {
+    if (!form.professor_id || !form.date || !form.period) {
+      setFormError('Tous les champs sont requis.')
+      return
+    }
+    setSaving(true)
+    setFormError('')
+    try {
+      await apiRequest('/unavailabilities', {
+        method: 'POST',
+        body: { professor_id: Number(form.professor_id), date: form.date, period: form.period },
+      })
+      closeForm()
+      await load()
+    } catch (e) {
+      setFormError(e.message || 'Erreur lors de la sauvegarde')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDelete(item) {
+    if (!window.confirm('Supprimer cette indisponibilité ?')) return
+    try {
+      await apiRequest(`/unavailabilities/${item.id}`, { method: 'DELETE' })
+      await load()
+    } catch (e) {
+      setError(e.message || 'Erreur lors de la suppression')
+    }
+  }
+
+  const profMap = new Map(professors.map(p => [p.id, p.name]))
+  const sorted  = [...unavailabilities].sort((a, b) => {
+    const na = profMap.get(a.professor_id) ?? ''
+    const nb = profMap.get(b.professor_id) ?? ''
+    return na.localeCompare(nb) || a.date.localeCompare(b.date)
+  })
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#0f172a' }}>
+          Indisponibilités ({unavailabilities.length})
+        </h2>
+        <button style={btnPrimary} onClick={openAdd}>
+          <Plus size={14} /> Ajouter
+        </button>
+      </div>
+
+      {showForm && (
+        <div style={{ background: '#f8fafc', border: '0.5px solid #e2e8f0', borderRadius: '8px', padding: '16px', marginBottom: '16px' }}>
+          <p style={{ margin: '0 0 12px 0', fontSize: '13px', fontWeight: 600, color: '#0f172a' }}>Nouvelle indisponibilité</p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '12px' }}>
+            <div>
+              <label style={labelStyle}>Professeur</label>
+              <select
+                value={form.professor_id}
+                onChange={e => setForm(f => ({ ...f, professor_id: e.target.value }))}
+                style={inputStyle}
+              >
+                <option value="">— Choisir —</option>
+                {professors.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Date</label>
+              <input
+                type="date"
+                value={form.date}
+                onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Période</label>
+              <select
+                value={form.period}
+                onChange={e => setForm(f => ({ ...f, period: e.target.value }))}
+                style={inputStyle}
+              >
+                <option value="morning">Matin</option>
+                <option value="afternoon">Après-midi</option>
+                <option value="full_day">Journée entière</option>
+              </select>
+            </div>
+          </div>
+          <InlineError msg={formError} />
+          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+            <button style={btnPrimary} onClick={handleSave} disabled={saving}>
+              {saving ? 'Sauvegarde…' : 'Créer'}
+            </button>
+            <button style={btnGhost} onClick={closeForm}>Annuler</button>
+          </div>
+        </div>
+      )}
+
+      <InlineError msg={error} />
+
+      {loading ? <CenteredSpinner /> : (
+        <div style={{ background: '#fff', border: '0.5px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={thStyle}>Professeur</th>
+                <th style={thStyle}>Date</th>
+                <th style={thStyle}>Période</th>
+                <th style={thStyle} />
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.length === 0 ? (
+                <tr><td colSpan={4} style={{ ...tdStyle, textAlign: 'center', color: '#94a3b8' }}>Aucune indisponibilité</td></tr>
+              ) : sorted.map(item => (
+                <tr key={item.id}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#f8fafc' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '' }}>
+                  <td style={{ ...tdStyle, fontWeight: 500 }}>{profMap.get(item.professor_id) ?? `#${item.professor_id}`}</td>
+                  <td style={tdStyle}>{item.date}</td>
+                  <td style={tdStyle}>{PERIOD_LABELS[item.period] ?? item.period}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>
+                    <button style={{ ...btnIcon, color: '#ef4444' }} onClick={() => handleDelete(item)} title="Supprimer">
+                      <Trash2 size={14} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Tab 6: Conflits ───────────────────────────────────────────────────────────
+
+const CONFLICT_EMPTY = { professor_a: '', professor_b: '' }
+
+function ConflitsTab() {
+  const [conflicts, setConflicts]   = useState([])
+  const [professors, setProfessors] = useState([])
+  const [loading, setLoading]       = useState(true)
+  const [error, setError]           = useState('')
+  const [showForm, setShowForm]     = useState(false)
+  const [form, setForm]             = useState(CONFLICT_EMPTY)
+  const [formError, setFormError]   = useState('')
+  const [saving, setSaving]         = useState(false)
+
+  useEffect(() => { load() }, [])
+
+  async function load() {
+    setLoading(true)
+    setError('')
+    try {
+      const [cData, pData] = await Promise.all([
+        apiRequest('/conflicts/resolved'),
+        apiRequest('/professors?limit=200'),
+      ])
+      setConflicts(Array.isArray(cData) ? cData : [])
+      setProfessors(Array.isArray(pData) ? pData : [])
+    } catch (e) {
+      setError(e.message || 'Erreur de chargement')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function openAdd() { setForm(CONFLICT_EMPTY); setFormError(''); setShowForm(true) }
+  function closeForm() { setShowForm(false); setFormError('') }
+
+  async function handleSave() {
+    if (!form.professor_a || !form.professor_b) {
+      setFormError('Sélectionnez les deux professeurs.')
+      return
+    }
+    if (form.professor_a === form.professor_b) {
+      setFormError('Les deux professeurs doivent être différents.')
+      return
+    }
+    setSaving(true)
+    setFormError('')
+    try {
+      await apiRequest('/conflicts/safe-create', {
+        method: 'POST',
+        body: { professor_a: Number(form.professor_a), professor_b: Number(form.professor_b) },
+      })
+      closeForm()
+      await load()
+    } catch (e) {
+      setFormError(e.message || 'Erreur lors de la sauvegarde')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDelete(item) {
+    if (!window.confirm('Supprimer ce conflit ?')) return
+    try {
+      await apiRequest(`/conflicts/${item.id}`, { method: 'DELETE' })
+      await load()
+    } catch (e) {
+      setError(e.message || 'Erreur lors de la suppression')
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#0f172a' }}>
+          Conflits ({conflicts.length})
+        </h2>
+        <button style={btnPrimary} onClick={openAdd}>
+          <Plus size={14} /> Ajouter un conflit
+        </button>
+      </div>
+
+      {showForm && (
+        <div style={{ background: '#f8fafc', border: '0.5px solid #e2e8f0', borderRadius: '8px', padding: '16px', marginBottom: '16px' }}>
+          <p style={{ margin: '0 0 12px 0', fontSize: '13px', fontWeight: 600, color: '#0f172a' }}>Nouveau conflit</p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '12px' }}>
+            <div>
+              <label style={labelStyle}>Professeur A</label>
+              <select
+                value={form.professor_a}
+                onChange={e => setForm(f => ({ ...f, professor_a: e.target.value }))}
+                style={inputStyle}
+              >
+                <option value="">— Choisir —</option>
+                {professors.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Professeur B</label>
+              <select
+                value={form.professor_b}
+                onChange={e => setForm(f => ({ ...f, professor_b: e.target.value }))}
+                style={inputStyle}
+              >
+                <option value="">— Choisir —</option>
+                {professors.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <InlineError msg={formError} />
+          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+            <button style={btnPrimary} onClick={handleSave} disabled={saving}>
+              {saving ? 'Sauvegarde…' : 'Ajouter le conflit'}
+            </button>
+            <button style={btnGhost} onClick={closeForm}>Annuler</button>
+          </div>
+        </div>
+      )}
+
+      <InlineError msg={error} />
+
+      {loading ? <CenteredSpinner /> : (
+        <div style={{ background: '#fff', border: '0.5px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={thStyle}>Professeur A</th>
+                <th style={thStyle}>Professeur B</th>
+                <th style={thStyle} />
+              </tr>
+            </thead>
+            <tbody>
+              {conflicts.length === 0 ? (
+                <tr><td colSpan={3} style={{ ...tdStyle, textAlign: 'center', color: '#94a3b8' }}>Aucun conflit enregistré</td></tr>
+              ) : conflicts.map(item => (
+                <tr key={item.id}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#f8fafc' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '' }}>
+                  <td style={{ ...tdStyle, fontWeight: 500 }}>{item.professor_a_name}</td>
+                  <td style={{ ...tdStyle, fontWeight: 500 }}>{item.professor_b_name}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>
+                    <button style={{ ...btnIcon, color: '#ef4444' }} onClick={() => handleDelete(item)} title="Supprimer">
+                      <Trash2 size={14} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Root component ────────────────────────────────────────────────────────────
 
 const TABS = [
-  { id: 'professors', label: 'Professeurs', Icon: Users },
-  { id: 'sessions',   label: 'Sessions',    Icon: Calendar },
-  { id: 'rooms',      label: 'Salles',      Icon: DoorOpen },
-  { id: 'projects',   label: 'Projets',     Icon: FileText },
+  { id: 'professors',       label: 'Professeurs',      Icon: Users },
+  { id: 'sessions',         label: 'Sessions',         Icon: Calendar },
+  { id: 'rooms',            label: 'Salles',           Icon: DoorOpen },
+  { id: 'projects',         label: 'Projets',          Icon: FileText },
+  { id: 'indisponibilites', label: 'Indisponibilités', Icon: Clock },
+  { id: 'conflits',         label: 'Conflits',         Icon: AlertTriangle },
 ]
 
 export default function Donnees() {
@@ -780,10 +1307,12 @@ export default function Donnees() {
         })}
       </div>
 
-      {activeTab === 'professors' && <ProfesseursTab />}
-      {activeTab === 'sessions'   && <SessionsTab />}
-      {activeTab === 'rooms'      && <SallesTab />}
-      {activeTab === 'projects'   && <ProjetsTab />}
+      {activeTab === 'professors'       && <ProfesseursTab />}
+      {activeTab === 'sessions'         && <SessionsTab />}
+      {activeTab === 'rooms'            && <SallesTab />}
+      {activeTab === 'projects'         && <ProjetsTab />}
+      {activeTab === 'indisponibilites' && <IndisponibilitesTab />}
+      {activeTab === 'conflits'         && <ConflitsTab />}
     </div>
   )
 }
