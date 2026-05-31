@@ -5,7 +5,9 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
+
+from app.schemas.rules import ConflictRead
 
 from app.db import get_db
 from app import models, schemas
@@ -139,6 +141,19 @@ def import_professors_endpoint(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+@professor_router.get(
+    "/{professor_id}/unavailabilities",
+    response_model=list[schemas.UnavailabilityOut],
+    name="list_professor_unavailabilities",
+)
+def list_professor_unavailabilities(professor_id: int, db: Session = Depends(get_db)):
+    return (
+        db.query(models.Unavailability)
+        .filter(models.Unavailability.professor_id == professor_id)
+        .all()
+    )
+
+
 student_router = build_crud_router(
     model=models.Student,
     create_schema=schemas.StudentCreate,
@@ -271,14 +286,12 @@ project_router = build_crud_router(
 
 @project_router.post(
     "/import",
-    response_model=schemas.ProjectImportReport,
     status_code=status.HTTP_201_CREATED,
     name="import_projects",
 )
 def import_projects_endpoint(
     file: UploadFile = File(...),
-    default_domain_id: int | None = Form(default=None),
-    default_supervisor_id: int | None = Form(default=None),
+    session_id: int = Form(...),
     dry_run: bool = Form(default=False),
     db: Session = Depends(get_db),
 ):
@@ -287,11 +300,10 @@ def import_projects_endpoint(
             db=db,
             file_name=file.filename or "projects_upload",
             content=file.file.read(),
-            default_domain_id=default_domain_id,
-            default_supervisor_id=default_supervisor_id,
+            session_id=session_id,
             dry_run=dry_run,
         )
-        return schemas.ProjectImportReport.model_validate(report)
+        return report
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -322,14 +334,120 @@ unavailability_router = build_crud_router(
     tag="unavailabilities",
 )
 
-conflict_router = build_crud_router(
-    model=models.Conflict,
-    create_schema=schemas.ConflictCreate,
-    update_schema=schemas.ConflictUpdate,
-    out_schema=schemas.ConflictOut,
-    path="/conflicts",
-    tag="conflicts",
+conflict_router = APIRouter(prefix="/conflicts", tags=["conflicts"])
+
+
+# ── specific routes FIRST (must precede /{item_id}) ───────────────────────────
+
+@conflict_router.get(
+    "/resolved",
+    response_model=list[ConflictRead],
+    name="list_conflicts_resolved",
 )
+def list_conflicts_resolved(db: Session = Depends(get_db)):
+    ProfA = aliased(models.Professor)
+    ProfB = aliased(models.Professor)
+    rows = (
+        db.query(models.Conflict, ProfA.name, ProfB.name)
+        .join(ProfA, models.Conflict.professor_a == ProfA.id)
+        .join(ProfB, models.Conflict.professor_b == ProfB.id)
+        .all()
+    )
+    return [
+        ConflictRead(
+            id=conflict.id,
+            professor_a=conflict.professor_a,
+            professor_b=conflict.professor_b,
+            professor_a_name=name_a,
+            professor_b_name=name_b,
+        )
+        for conflict, name_a, name_b in rows
+    ]
+
+
+@conflict_router.post(
+    "/safe-create",
+    response_model=schemas.ConflictOut,
+    status_code=status.HTTP_201_CREATED,
+    name="safe_create_conflict",
+)
+def safe_create_conflict(payload: schemas.ConflictCreate, db: Session = Depends(get_db)):
+    existing = db.query(models.Conflict).filter(
+        (
+            (models.Conflict.professor_a == payload.professor_a) &
+            (models.Conflict.professor_b == payload.professor_b)
+        ) | (
+            (models.Conflict.professor_a == payload.professor_b) &
+            (models.Conflict.professor_b == payload.professor_a)
+        )
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Ce conflit existe déjà")
+    obj = models.Conflict(**payload.model_dump())
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+# ── generic CRUD routes AFTER the specific ones ───────────────────────────────
+
+@conflict_router.post("", response_model=schemas.ConflictOut, status_code=status.HTTP_201_CREATED, name="create_conflicts")
+def create_conflict(payload: dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    data = schemas.ConflictCreate.model_validate(payload).model_dump()
+    obj = models.Conflict(**data)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@conflict_router.get("", response_model=list[schemas.ConflictOut], name="list_conflicts")
+def list_conflicts(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    return db.query(models.Conflict).offset(skip).limit(limit).all()
+
+
+@conflict_router.get("/{item_id}", response_model=schemas.ConflictOut, name="get_conflicts")
+def get_conflict(item_id: int, db: Session = Depends(get_db)):
+    obj = db.query(models.Conflict).filter(models.Conflict.id == item_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="conflicts not found")
+    return obj
+
+
+@conflict_router.put("/{item_id}", response_model=schemas.ConflictOut, name="update_conflicts")
+def update_conflict(item_id: int, payload: dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    obj = db.query(models.Conflict).filter(models.Conflict.id == item_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="conflicts not found")
+    update_data = schemas.ConflictUpdate.model_validate(payload).model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(obj, field, value)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@conflict_router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT, name="delete_conflicts")
+def delete_conflict(item_id: int, db: Session = Depends(get_db)):
+    obj = db.query(models.Conflict).filter(models.Conflict.id == item_id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="conflicts not found")
+    try:
+        db.delete(obj)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Impossible de supprimer : ce professeur est lié à des projets ou des affectations existantes.",
+        )
+    return None
+
 
 assignment_router = build_crud_router(
     model=models.Assignment,

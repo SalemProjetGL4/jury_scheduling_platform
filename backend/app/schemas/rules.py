@@ -45,6 +45,11 @@ class ConflictOut(ConflictBase, ORMBase):
     id: int
 
 
+class ConflictRead(ConflictOut):
+    professor_a_name: str
+    professor_b_name: str
+
+
 class ConstraintRuleBase(BaseModel):
     name: str
     type: str

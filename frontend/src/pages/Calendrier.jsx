@@ -438,48 +438,56 @@ export default function Calendrier() {
     let active = true
 
     async function loadCalendar() {
-      try {
-        const [sessionsData, slotsData, assignmentsData, professorsData, projectsData, studentsData, filieresData] = await Promise.all([
-          apiRequest('/sessions?limit=200'),
-          apiRequest('/slots?limit=200'),
-          apiRequest('/assignments?limit=200'),
-          apiRequest('/professors?limit=200'),
-          apiRequest('/projects?limit=200'),
-          apiRequest('/students?limit=200'),
-          apiRequest('/filieres'),
-        ])
-
-        if (!active) return
-
-        const safeSessions    = Array.isArray(sessionsData)    ? sessionsData    : []
-        const safeSlots       = Array.isArray(slotsData)       ? slotsData       : []
-        const safeAssignments = Array.isArray(assignmentsData) ? assignmentsData : []
-        const safeProfessors  = Array.isArray(professorsData)  ? professorsData  : []
-        const safeProjects    = Array.isArray(projectsData)    ? projectsData    : []
-        const safeStudents    = Array.isArray(studentsData)    ? studentsData    : []
-        const safeFilieres    = Array.isArray(filieresData?.items ?? filieresData) ? (filieresData?.items ?? filieresData) : []
-
-        const sortedSessions = safeSessions
-          .slice()
-          .sort((a, b) => new Date(a.start_date) - new Date(b.start_date))
-
-        setSessions(sortedSessions)
-        setSlots(safeSlots)
-        setAssignments(safeAssignments)
-        setProfessors(safeProfessors)
-        setProjects(safeProjects)
-        setStudents(safeStudents)
-        setFilieres(safeFilieres)
-
-        if (sortedSessions.length > 0) {
-          const latestSession = sortedSessions[sortedSessions.length - 1]
-          setSelectedSessionId(current => current ?? latestSession.id)
+      const safeGet = async (path, limit = 200) => {
+        try {
+          const res = await apiRequest(`${path}?limit=${limit}`)
+          return res || []
+        } catch (e) {
+          console.warn(`Calendrier: failed to load ${path}:`, e.message)
+          return []
         }
-
-        setError('')
-      } catch (err) {
-        if (active) setError(err.message || 'Impossible de charger le calendrier')
       }
+
+      let sessionsData, slotsData, assignmentsData, professorsData, projectsData, studentsData, filieresData
+      ;[sessionsData, slotsData, assignmentsData, professorsData,
+        projectsData, studentsData, filieresData] = await Promise.all([
+        safeGet('/sessions'),
+        safeGet('/slots'),
+        safeGet('/assignments'),
+        safeGet('/professors'),
+        safeGet('/projects'),
+        safeGet('/students'),
+        safeGet('/filieres'),
+      ])
+
+      if (!active) return
+
+      const safeSessions    = Array.isArray(sessionsData)    ? sessionsData    : []
+      const safeSlots       = Array.isArray(slotsData)       ? slotsData       : []
+      const safeAssignments = Array.isArray(assignmentsData) ? assignmentsData : []
+      const safeProfessors  = Array.isArray(professorsData)  ? professorsData  : []
+      const safeProjects    = Array.isArray(projectsData)    ? projectsData    : []
+      const safeStudents    = Array.isArray(studentsData)    ? studentsData    : []
+      const safeFilieres    = Array.isArray(filieresData?.items ?? filieresData) ? (filieresData?.items ?? filieresData) : []
+
+      const sortedSessions = safeSessions
+        .slice()
+        .sort((a, b) => new Date(a.start_date) - new Date(b.start_date))
+
+      setSessions(sortedSessions)
+      setSlots(safeSlots)
+      setAssignments(safeAssignments)
+      setProfessors(safeProfessors)
+      setProjects(safeProjects)
+      setStudents(safeStudents)
+      setFilieres(safeFilieres)
+
+      if (sortedSessions.length > 0) {
+        const latestSession = sortedSessions[sortedSessions.length - 1]
+        setSelectedSessionId(current => current ?? latestSession.id)
+      }
+
+      setError('')
     }
 
     loadCalendar()

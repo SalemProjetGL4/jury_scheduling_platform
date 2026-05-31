@@ -50,6 +50,9 @@ class Project(Base):
     domain_id: Mapped[int] = mapped_column(ForeignKey("domain.id"), nullable=False)
     supervisor_id: Mapped[int] = mapped_column(ForeignKey("professor.id", ondelete="RESTRICT"), nullable=False)
     student_id: Mapped[int] = mapped_column(ForeignKey("student.id"), nullable=False)
+    session_id: Mapped[int] = mapped_column(ForeignKey("session.id", ondelete="CASCADE"), nullable=False)
+    enterprise: Mapped[str | None] = mapped_column(String, nullable=True)
+    enterprise_supervisor: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Assignment(Base):
