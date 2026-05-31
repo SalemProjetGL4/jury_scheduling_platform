@@ -85,10 +85,32 @@ function CenteredSpinner() {
 
 // ── Tab 1: Professeurs ────────────────────────────────────────────────────────
 
-const PROF_EMPTY = { name: '', email: '', department_id: '', max_juries: 3 }
+const PROF_EMPTY = { name: '', email: '', department_id: '', max_juries: 3, domain_ids: [] }
+
+function DomainChip({ name, onRemove }) {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: '4px',
+      background: '#eff6ff', border: '0.5px solid #bfdbfe', borderRadius: '99px',
+      padding: '2px 8px', fontSize: '11px', color: '#1d4ed8', fontWeight: 500,
+    }}>
+      {name}
+      {onRemove && (
+        <button
+          onClick={onRemove}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0', lineHeight: 1, color: '#60a5fa', display: 'flex', alignItems: 'center' }}
+          title="Retirer"
+        >
+          <X size={10} />
+        </button>
+      )}
+    </span>
+  )
+}
 
 function ProfesseursTab() {
   const [professors, setProfessors] = useState([])
+  const [domains, setDomains]       = useState([])
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState('')
   const [search, setSearch]         = useState('')
@@ -104,8 +126,12 @@ function ProfesseursTab() {
     setLoading(true)
     setError('')
     try {
-      const data = await apiRequest('/professors?limit=200')
-      setProfessors(Array.isArray(data) ? data : [])
+      const [profData, domData] = await Promise.all([
+        apiRequest('/professors?limit=200'),
+        apiRequest('/domains?limit=200'),
+      ])
+      setProfessors(Array.isArray(profData) ? profData : [])
+      setDomains(Array.isArray(domData) ? domData : [])
     } catch (e) {
       setError(e.message || 'Erreur de chargement')
     } finally {
@@ -122,7 +148,13 @@ function ProfesseursTab() {
 
   function openEdit(prof) {
     setEditingProf(prof)
-    setForm({ name: prof.name, email: prof.email, department_id: prof.department_id, max_juries: prof.max_juries })
+    setForm({
+      name: prof.name,
+      email: prof.email,
+      department_id: prof.department_id,
+      max_juries: prof.max_juries,
+      domain_ids: Array.isArray(prof.domain_ids) ? [...prof.domain_ids] : [],
+    })
     setFormError('')
     setShowForm(true)
   }
@@ -135,6 +167,25 @@ function ProfesseursTab() {
 
   function field(key) {
     return e => setForm(f => ({ ...f, [key]: e.target.value }))
+  }
+
+  function addDomain(domainId) {
+    const id = Number(domainId)
+    if (!id || form.domain_ids.includes(id)) return
+    setForm(f => ({ ...f, domain_ids: [...f.domain_ids, id] }))
+  }
+
+  function removeDomain(domainId) {
+    setForm(f => ({ ...f, domain_ids: f.domain_ids.filter(id => id !== domainId) }))
+  }
+
+  async function syncDomains(professorId, oldIds, newIds) {
+    const toAdd    = newIds.filter(id => !oldIds.includes(id))
+    const toRemove = oldIds.filter(id => !newIds.includes(id))
+    await Promise.all([
+      ...toAdd.map(id    => apiRequest(`/professors/${professorId}/domains/${id}`, { method: 'POST' })),
+      ...toRemove.map(id => apiRequest(`/professors/${professorId}/domains/${id}`, { method: 'DELETE' })),
+    ])
   }
 
   async function handleSave() {
@@ -153,8 +204,10 @@ function ProfesseursTab() {
     try {
       if (editingProf) {
         await apiRequest(`/professors/${editingProf.id}`, { method: 'PUT', body: payload })
+        await syncDomains(editingProf.id, editingProf.domain_ids || [], form.domain_ids)
       } else {
-        await apiRequest('/professors', { method: 'POST', body: payload })
+        const created = await apiRequest('/professors', { method: 'POST', body: payload })
+        await syncDomains(created.id, [], form.domain_ids)
       }
       closeForm()
       await load()
@@ -174,6 +227,9 @@ function ProfesseursTab() {
       setError(e.message || 'Erreur lors de la suppression')
     }
   }
+
+  const domainMap = Object.fromEntries(domains.map(d => [d.id, d.name]))
+  const availableDomains = domains.filter(d => !form.domain_ids.includes(d.id))
 
   const filtered = professors.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -215,6 +271,30 @@ function ProfesseursTab() {
             <input placeholder="Department ID"  value={form.department_id} onChange={field('department_id')} style={inputStyle} type="number" min="1" />
             <input placeholder="Max jurys"      value={form.max_juries}    onChange={field('max_juries')}    style={inputStyle} type="number" min="0" />
           </div>
+
+          {/* Domain picker */}
+          <div style={{ marginBottom: '12px' }}>
+            <label style={labelStyle}>Domaines</label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <select
+                value=""
+                onChange={e => { addDomain(e.target.value); e.target.value = '' }}
+                style={{ ...inputStyle, width: 'auto', minWidth: '200px' }}
+              >
+                <option value="">— Ajouter un domaine —</option>
+                {availableDomains.map(d => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+              {form.domain_ids.map(id => (
+                <DomainChip key={id} name={domainMap[id] ?? `#${id}`} onRemove={() => removeDomain(id)} />
+              ))}
+              {form.domain_ids.length === 0 && (
+                <span style={{ fontSize: '12px', color: '#94a3b8' }}>Aucun domaine sélectionné</span>
+              )}
+            </div>
+          </div>
+
           <InlineError msg={formError} />
           <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
             <button style={btnPrimary} onClick={handleSave} disabled={saving}>
@@ -236,12 +316,13 @@ function ProfesseursTab() {
                 <th style={thStyle}>Email</th>
                 <th style={thStyle}>Département</th>
                 <th style={thStyle}>Max jurys</th>
+                <th style={thStyle}>Domaines</th>
                 <th style={thStyle} />
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={5} style={{ ...tdStyle, textAlign: 'center', color: '#94a3b8' }}>Aucun résultat</td></tr>
+                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: 'center', color: '#94a3b8' }}>Aucun résultat</td></tr>
               ) : filtered.map(prof => (
                 <tr key={prof.id} style={{ transition: 'background 0.1s' }}
                   onMouseEnter={e => { e.currentTarget.style.background = '#f8fafc' }}
@@ -250,6 +331,16 @@ function ProfesseursTab() {
                   <td style={{ ...tdStyle, color: '#64748b' }}>{prof.email}</td>
                   <td style={tdStyle}>{prof.department_id}</td>
                   <td style={tdStyle}>{prof.max_juries}</td>
+                  <td style={tdStyle}>
+                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                      {(prof.domain_ids || []).length === 0
+                        ? <span style={{ color: '#94a3b8', fontSize: '12px' }}>—</span>
+                        : (prof.domain_ids || []).map(id => (
+                            <DomainChip key={id} name={domainMap[id] ?? `#${id}`} />
+                          ))
+                      }
+                    </div>
+                  </td>
                   <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button style={btnIcon} onClick={() => openEdit(prof)} title="Modifier">
                       <Pencil size={14} />

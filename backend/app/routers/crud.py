@@ -158,6 +158,42 @@ def list_professor_unavailabilities(professor_id: int, db: Session = Depends(get
     )
 
 
+@professor_router.post(
+    "/{professor_id}/domains/{domain_id}",
+    status_code=status.HTTP_201_CREATED,
+    name="add_professor_domain",
+)
+def add_professor_domain(professor_id: int, domain_id: int, db: Session = Depends(get_db)):
+    if not db.query(models.Professor).filter(models.Professor.id == professor_id).first():
+        raise HTTPException(status_code=404, detail="Professor not found")
+    if not db.query(models.Domain).filter(models.Domain.id == domain_id).first():
+        raise HTTPException(status_code=404, detail="Domain not found")
+    existing = db.query(models.ProfessorDomain).filter(
+        models.ProfessorDomain.professor_id == professor_id,
+        models.ProfessorDomain.domain_id == domain_id,
+    ).first()
+    if not existing:
+        db.add(models.ProfessorDomain(professor_id=professor_id, domain_id=domain_id))
+        db.commit()
+    return {"professor_id": professor_id, "domain_id": domain_id}
+
+
+@professor_router.delete(
+    "/{professor_id}/domains/{domain_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    name="remove_professor_domain",
+)
+def remove_professor_domain(professor_id: int, domain_id: int, db: Session = Depends(get_db)):
+    row = db.query(models.ProfessorDomain).filter(
+        models.ProfessorDomain.professor_id == professor_id,
+        models.ProfessorDomain.domain_id == domain_id,
+    ).first()
+    if row:
+        db.delete(row)
+        db.commit()
+    return None
+
+
 student_router = build_crud_router(
     model=models.Student,
     create_schema=schemas.StudentCreate,
