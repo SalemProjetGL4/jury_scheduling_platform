@@ -73,11 +73,13 @@ def build_soft_terms(
     expertise_terms: list[cp_model.LinearExpr] = []
     for pid in professor_ids:
         prof = professor_by_id.get(pid, {})
-        prof_domain = prof.get("domain_id")
+        raw_prof_domains = prof.get("domain_ids") or []
+        if not raw_prof_domains and prof.get("domain_id"):
+            raw_prof_domains = [prof["domain_id"]]
+        prof_domain_ids = set(raw_prof_domains)
         prof_dept = prof.get("department_id")
         for pr_id in project_ids:
             project = project_by_id.get(pr_id, {})
-            # Handle multi-domain projects: prefer any professor domain in project.domain_ids
             project_domain_ids = set(project.get("domain_ids") or ([] if project.get("domain_id") is None else [project.get("domain_id")]))
             if not project_domain_ids:
                 continue
@@ -89,13 +91,13 @@ def build_soft_terms(
                     var = vars_.x.get((pid, pr_id, role, session["id"]))
                     if var is None:
                         continue
-                    # Domain mismatch -> heavier penalty (count as 2)
-                    if not prof_domain or prof_domain not in project_domain_ids:
+                    domain_match = bool(prof_domain_ids & project_domain_ids)
+                    if not domain_match:
+                        # No domain overlap — heaviest penalty
                         expertise_terms.append(2 * var)
-                    else:
-                        # Domain matches; penalize if professor's department != student's filiere department
-                        if project_filiere_dept and prof_dept != project_filiere_dept:
-                            expertise_terms.append(var)
+                    elif project_filiere_dept and prof_dept != project_filiere_dept:
+                        # Domain matches but different filiere department — light penalty
+                        expertise_terms.append(var)
 
     expertise_penalty = sum(expertise_terms) if expertise_terms else 0
 

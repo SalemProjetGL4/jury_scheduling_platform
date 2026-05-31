@@ -33,6 +33,7 @@ def build_solver_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
         {
             "id": p["id"],
             "domain_id": p["domain_id"],
+            "domain_ids": list(p.get("domain_ids") or []),
             "department_id": p.get("department_id", 0),
             "max_juries": p["max_juries"],
         }

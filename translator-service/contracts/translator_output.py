@@ -26,6 +26,7 @@ class ProfessorPayload(BaseModel):
     id: int
     domain_id: int
     domain_ids: list[int] = Field(default_factory=list)
+    department_id: int = 0
     specialities: list[str] = Field(default_factory=list)
     max_juries: int
 

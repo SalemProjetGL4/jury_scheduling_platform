@@ -130,6 +130,15 @@ def build_db_snapshot() -> dict[str, Any]:
         # load canonical domain rows for keyword mapping
         domain_rows = conn.execute(text("SELECT id, name FROM domain ORDER BY id")).mappings().all()
 
+        dept_domain_rows = conn.execute(
+            text("SELECT department_id, domain_id FROM department_domain ORDER BY department_id, domain_id")
+        ).mappings().all()
+
+    dept_to_domain_ids: dict[int, list[int]] = {}
+    for row in dept_domain_rows:
+        dept_id = int(row["department_id"])
+        dept_to_domain_ids.setdefault(dept_id, []).append(int(row["domain_id"]))
+
     sessions = [
         {
             "id": int(row["id"]),
@@ -218,11 +227,14 @@ def build_db_snapshot() -> dict[str, Any]:
             title,
             keywords,
         )
-        # derive domain_ids: prefer DB-provided, otherwise map from keywords
+        # derive domain_ids: prefer DB-provided, then filiere department, then keywords
         raw_domain_ids = list(row.get("domain_ids") or [])
         domain_ids = [int(d) for d in raw_domain_ids if d is not None]
         if not domain_ids:
-            # fallback to mapping via keywords
+            filiere_dept_id = int(row.get("filiere_department_id") or 0)
+            if filiere_dept_id:
+                domain_ids = dept_to_domain_ids.get(filiere_dept_id, [])
+        if not domain_ids:
             domain_ids = map_keywords_to_domain_ids(keywords, domain_rows)
 
         projects.append(
@@ -267,9 +279,10 @@ def build_db_snapshot() -> dict[str, Any]:
                 "name": str(row["name"]),
                 "email": str(row["email"]),
                 "max_juries": int(row["max_juries"]),
-                    "domain_id": int(row["domain_id"] or 0),
-                    "department_id": int(row["department_id"] or 0),
-                    "domain_name": (list(row["domain_names"] or [""])[0] if list(row["domain_names"] or []) else ""),
+                "domain_id": int(row["domain_id"] or 0),
+                "domain_ids": [int(d) for d in (row.get("domain_ids") or []) if d is not None],
+                "department_id": int(row["department_id"] or 0),
+                "domain_name": (list(row["domain_names"] or [""])[0] if list(row["domain_names"] or []) else ""),
             }
             for row in professor_rows
         ],
@@ -426,15 +439,18 @@ def _extract_project_keywords_with_llm(project_rows: list[dict[str, Any]]) -> di
     except Exception:
         return {}
 
-    payload = [
-        {
-            "id": int(row["id"]),
-            "title": str(row["title"] or ""),
-            "domain_id": int(row["domain_id"]),
-            "domain_name": str(row["domain_name"] or ""),
-        }
-        for row in project_rows
-    ]
+    try:
+        payload = [
+            {
+                "id": int(row["id"]),
+                "title": str(row["title"] or ""),
+                "domain_id": int(row["domain_id"] or 0),
+                "domain_name": str(row["domain_name"] or ""),
+            }
+            for row in project_rows
+        ]
+    except Exception:
+        return {}
 
     system_prompt = (
         "You extract concise general technical keywords from project titles. "

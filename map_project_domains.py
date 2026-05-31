@@ -208,7 +208,13 @@ def main() -> None:
     if psql_json("SELECT 1 AS ok") is None:
         sys.exit(1)
 
-    projects = psql_json("SELECT id, title FROM project ORDER BY id")
+    projects = psql_json("""
+        SELECT p.id, p.title, f.department_id
+        FROM project p
+        JOIN student st ON st.id = p.student_id
+        JOIN filiere f ON f.id = st.filiere_id
+        ORDER BY p.id
+    """)
     domains  = psql_json("SELECT id, name FROM domain ORDER BY id")
 
     if not projects:
@@ -218,28 +224,43 @@ def main() -> None:
         print("No domains found — run setup_domains.py first.")
         sys.exit(0)
 
+    dept_domains_raw = psql_json(
+        "SELECT department_id, domain_id FROM department_domain ORDER BY department_id, domain_id"
+    )
+    dept_to_domain_ids: dict[int, list[int]] = {}
+    for row in dept_domains_raw:
+        dept_id = int(row["department_id"])
+        dept_to_domain_ids.setdefault(dept_id, []).append(int(row["domain_id"]))
+
     print(f"Found {len(projects)} projects and {len(domains)} domains.\n")
 
-    mapping: list[tuple[int, str, list[int], list[str]]] = []
+    mapping: list[tuple[int, str, list[int], list[str], str]] = []
     for p in projects:
         pid   = int(p["id"])
         title = str(p["title"] or "")
         dids  = map_title_to_domain_ids(title, domains)
+        source = "title"
+        if not dids:
+            dept_id = int(p.get("department_id") or 0)
+            if dept_id:
+                dids = dept_to_domain_ids.get(dept_id, [])
+                if dids:
+                    source = "filiere"
         dnames = [d["name"] for d in domains if int(d["id"]) in dids]
-        mapping.append((pid, title, dids, dnames))
+        mapping.append((pid, title, dids, dnames, source))
 
     col = min(max(len(m[1]) for m in mapping), 90) + 2
-    print(f"{'ID':<5} {'Title':<{col}} Domains")
-    print("-" * (5 + col + 50))
-    for pid, title, dids, dnames in mapping:
+    print(f"{'ID':<5} {'Src':<7} {'Title':<{col}} Domains")
+    print("-" * (5 + 7 + col + 50))
+    for pid, title, dids, dnames, source in mapping:
         label = ", ".join(dnames) if dnames else "(no match)"
         display = title if len(title) <= col else title[:col - 3] + "..."
-        print(f"{pid:<5} {display:<{col}} {label}")
+        print(f"{pid:<5} {source:<7} {display:<{col}} {label}")
 
     no_match = [m for m in mapping if not m[2]]
     if no_match:
         print(f"\n  WARNING: {len(no_match)} project(s) with no domain match:")
-        for pid, title, _, _ in no_match:
+        for pid, title, _, _, _ in no_match:
             print(f"    [{pid}] {title[:80]}")
 
     if DRY_RUN:
@@ -253,7 +274,7 @@ def main() -> None:
         return
 
     ok = errors = 0
-    for pid, _, dids, _ in mapping:
+    for pid, _, dids, _, _ in mapping:
         arr = "{" + ",".join(str(d) for d in dids) + "}"
         if psql_exec(f"UPDATE project SET domain_ids = '{arr}' WHERE id = {pid};"):
             ok += 1
