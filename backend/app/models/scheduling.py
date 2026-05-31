@@ -1,6 +1,6 @@
 import datetime as dt
 
-from sqlalchemy import CheckConstraint, Date, ForeignKey, Integer, String
+from sqlalchemy import ARRAY, CheckConstraint, Date, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -47,7 +47,7 @@ class Project(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
-    domain_id: Mapped[int] = mapped_column(ForeignKey("domain.id"), nullable=False)
+    domain_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False, server_default="{}")
     supervisor_id: Mapped[int] = mapped_column(ForeignKey("professor.id", ondelete="RESTRICT"), nullable=False)
     student_id: Mapped[int] = mapped_column(ForeignKey("student.id"), nullable=False)
     session_id: Mapped[int] = mapped_column(ForeignKey("session.id", ondelete="CASCADE"), nullable=False)

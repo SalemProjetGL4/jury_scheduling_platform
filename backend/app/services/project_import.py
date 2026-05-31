@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as DBSession
 
 from app import models
+from app.services.domain_mapping import infer_domain_ids
 
 
 _HEADER_MAP: dict[str, str] = {
@@ -149,6 +150,46 @@ def _clean(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _resolve_domain_ids(
+    raw_names: str | None,
+    raw_ids: str | None,
+    domain_name_map: dict[str, int],
+    all_domain_ids: set[int],
+    default_domain_id: int | None,
+) -> tuple[list[int], str | None]:
+    """Return (resolved_ids, error_message). Supports comma-separated names/ids."""
+    resolved: list[int] = []
+
+    # Parse comma-separated IDs from a domain_id column if present
+    if raw_ids:
+        for part in str(raw_ids).split(","):
+            did = _to_int(part.strip())
+            if did is not None:
+                resolved.append(did)
+
+    # Parse comma-separated names from domain_name/domain_names column
+    if raw_names:
+        for part in str(raw_names).split(","):
+            name = part.strip().lower()
+            if name:
+                did = domain_name_map.get(name)
+                if did is not None and did not in resolved:
+                    resolved.append(did)
+
+    # Fall back to default
+    if not resolved and default_domain_id is not None:
+        resolved.append(default_domain_id)
+
+    if not resolved:
+        return [], "Missing domain_id or domain_name"
+
+    unknown = [d for d in resolved if d not in all_domain_ids]
+    if unknown:
+        return [], f"Unknown domain id(s): {unknown}"
+
+    return resolved, None
 
 
 def import_projects(

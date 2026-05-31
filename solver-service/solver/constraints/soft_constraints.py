@@ -69,43 +69,35 @@ def build_soft_terms(
                     tokens.add(token)
         return tokens
 
-    professor_domains: dict[int, set[int]] = {}
-    professor_keywords: dict[int, set[str]] = {}
-    for pid, professor in professor_by_id.items():
-        raw_domains = professor.get("domain_ids") or []
-        professor_domains[pid] = {int(value) for value in raw_domains if value}
-        professor_keywords[pid] = _normalize_keywords(list(professor.get("specialities") or []))
-
-    project_keywords: dict[int, set[str]] = {}
-    for pr_id, project in project_by_id.items():
-        project_keywords[pr_id] = _normalize_keywords(list(project.get("domain_keywords") or []))
-    expertise_terms: list[cp_model.IntVar] = []
+    # Build expertise terms with domain-first, then filiere (department) preference.
+    expertise_terms: list[cp_model.LinearExpr] = []
     for pid in professor_ids:
+        prof = professor_by_id.get(pid, {})
+        raw_prof_domains = prof.get("domain_ids") or []
+        if not raw_prof_domains and prof.get("domain_id"):
+            raw_prof_domains = [prof["domain_id"]]
+        prof_domain_ids = set(raw_prof_domains)
+        prof_dept = prof.get("department_id")
         for pr_id in project_ids:
-            project_domain = project_by_id[pr_id].get("domain_id")
-            project_kw = project_keywords.get(pr_id) or set()
-            if not project_domain and not project_kw:
+            project = project_by_id.get(pr_id, {})
+            project_domain_ids = set(project.get("domain_ids") or ([] if project.get("domain_id") is None else [project.get("domain_id")]))
+            if not project_domain_ids:
                 continue
 
-            domains = professor_domains.get(pid) or set()
-            professor_domain = professor_by_id[pid].get("domain_id")
-            professor_kw = professor_keywords.get(pid) or set()
-            if not domains and not professor_domain and not professor_kw:
-                continue
+            project_filiere_dept = project.get("filiere_department_id")
 
-            has_domain_match = False
-            if project_domain and domains:
-                has_domain_match = project_domain in domains
-            elif project_domain and professor_domain:
-                has_domain_match = project_domain == professor_domain
-
-            has_keyword_match = bool(project_kw and professor_kw and (project_kw & professor_kw))
-
-            if has_domain_match or has_keyword_match:
-                continue
             for role in ("PRESIDENT", "EXAMINER"):
                 for session in sessions:
-                    expertise_terms.append(vars_.x[(pid, pr_id, role, session["id"])])
+                    var = vars_.x.get((pid, pr_id, role, session["id"]))
+                    if var is None:
+                        continue
+                    domain_match = bool(prof_domain_ids & project_domain_ids)
+                    if not domain_match:
+                        # No domain overlap — heaviest penalty
+                        expertise_terms.append(2 * var)
+                    elif project_filiere_dept and prof_dept != project_filiere_dept:
+                        # Domain matches but different filiere department — light penalty
+                        expertise_terms.append(var)
 
     expertise_penalty = sum(expertise_terms) if expertise_terms else 0
 
