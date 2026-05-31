@@ -69,40 +69,20 @@ def build_soft_terms(
                     tokens.add(token)
         return tokens
 
-    professor_domains: dict[int, set[int]] = {}
-    professor_keywords: dict[int, set[str]] = {}
-    for pid, professor in professor_by_id.items():
-        raw_domains = professor.get("domain_ids") or []
-        professor_domains[pid] = {int(value) for value in raw_domains if value}
-        professor_keywords[pid] = _normalize_keywords(list(professor.get("specialities") or []))
-
-    project_keywords: dict[int, set[str]] = {}
-    for pr_id, project in project_by_id.items():
-        project_keywords[pr_id] = _normalize_keywords(list(project.get("domain_keywords") or []))
+    # Professors now expose a single `domain_id`; no domain_ids list.
     expertise_terms: list[cp_model.IntVar] = []
     for pid in professor_ids:
         for pr_id in project_ids:
             project_domain = project_by_id[pr_id].get("domain_id")
-            project_kw = project_keywords.get(pr_id) or set()
-            if not project_domain and not project_kw:
+            if not project_domain:
                 continue
 
-            domains = professor_domains.get(pid) or set()
             professor_domain = professor_by_id[pid].get("domain_id")
-            professor_kw = professor_keywords.get(pid) or set()
-            if not domains and not professor_domain and not professor_kw:
-                continue
-
-            has_domain_match = False
-            if project_domain and domains:
-                has_domain_match = project_domain in domains
-            elif project_domain and professor_domain:
-                has_domain_match = project_domain == professor_domain
-
-            has_keyword_match = bool(project_kw and professor_kw and (project_kw & professor_kw))
-
-            if has_domain_match or has_keyword_match:
-                continue
+            # If professor has no domain, it's a mismatch -> add penalty terms
+            if not professor_domain or project_domain != professor_domain:
+                for role in ("PRESIDENT", "EXAMINER"):
+                    for session in sessions:
+                        expertise_terms.append(vars_.x[(pid, pr_id, role, session["id"])])
             for role in ("PRESIDENT", "EXAMINER"):
                 for session in sessions:
                     expertise_terms.append(vars_.x[(pid, pr_id, role, session["id"])])

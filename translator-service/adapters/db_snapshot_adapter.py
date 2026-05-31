@@ -188,9 +188,7 @@ def build_db_snapshot() -> dict[str, Any]:
                 "id": int(row["id"]),
                 "name": str(row["name"]),
                 "email": str(row["email"]),
-                "specialities": list(row["preferences"] or []),
                 "max_juries": int(row["max_juries"]),
-                "domain_ids": [int(value) for value in (row["domain_ids"] or [])],
                 "domain_id": int(row["domain_id"] or 0),
                 "domain_name": (list(row["domain_names"] or [""])[0] if list(row["domain_names"] or []) else ""),
             }
