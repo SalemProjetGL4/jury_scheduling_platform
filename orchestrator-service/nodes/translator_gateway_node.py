@@ -16,6 +16,7 @@ def translator_gateway_node(state: SchedulingState) -> SchedulingState:
                 request_id=state["request_id"],
                 prompt=state["user_prompt"],
                 user_id=state.get("user_id"),
+                session_id=state.get("session_id"),
             )
         finally:
             mark_step_end(state, node_name, "http_call")

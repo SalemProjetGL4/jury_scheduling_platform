@@ -9,6 +9,7 @@ class TranslateRequest(BaseModel):
     request_id: str
     prompt: str
     user_id: str | None = None
+    session_id: int | None = None
 
 
 class TranslateResponse(BaseModel):

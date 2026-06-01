@@ -10,6 +10,9 @@ export function WorkflowProvider({ children }) {
   const [result, setResult] = useState(() => load('juriq_workflow_result'))
   const [selectedSolution, setSelectedSolution] = useState(() => load('juriq_selected_solution'))
   const [status, setStatus] = useState(() => load('juriq_workflow_status'))
+  const [sessionId, setSessionId] = useState(() => {
+    try { return localStorage.getItem('juriq_session_id') || null } catch { return null }
+  })
 
   function saveResult(data) {
     console.group('[WorkflowContext] saveResult')
@@ -48,6 +51,16 @@ export function WorkflowProvider({ children }) {
     try { localStorage.removeItem('juriq_selected_solution') } catch { /* ok */ }
   }
 
+  function saveSessionId(id) {
+    setSessionId(id)
+    try { localStorage.setItem('juriq_session_id', id) } catch { /* quota */ }
+  }
+
+  function clearSessionId() {
+    setSessionId(null)
+    try { localStorage.removeItem('juriq_session_id') } catch { /* ok */ }
+  }
+
   return (
     <WorkflowContext.Provider
       value={{
@@ -60,6 +73,9 @@ export function WorkflowProvider({ children }) {
         selectedSolution,
         saveSelectedSolution,
         clearSelectedSolution,
+        sessionId,
+        saveSessionId,
+        clearSessionId,
       }}
     >
       {children}

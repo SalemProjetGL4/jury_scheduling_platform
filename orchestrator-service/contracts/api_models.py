@@ -10,6 +10,7 @@ class ScheduleRequest(BaseModel):
     user_id: str | None = None
     old_solver_result: dict[str, Any] | None = None
     requested_route: Literal["GENERATE", "EDIT", "QUERY"] | None = None
+    session_id: int | None = None
 
 
 class ScheduleAcceptedResponse(BaseModel):

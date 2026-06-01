@@ -16,6 +16,7 @@ def translate(payload: TranslateRequest):
             request_id=payload.request_id,
             prompt=payload.prompt,
             user_id=payload.user_id,
+            session_id=payload.session_id,
         )
         return TranslateResponse.model_validate(result)
     except ValueError as exc:

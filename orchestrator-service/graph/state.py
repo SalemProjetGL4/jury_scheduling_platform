@@ -36,6 +36,7 @@ class SchedulingState(TypedDict):
     request_id: str
     user_id: Optional[str]
     user_prompt: str
+    session_id: Optional[int]
 
     requested_route: Optional[RouteType]
     route: Optional[RouteType]
@@ -70,11 +71,13 @@ def init_state(
     user_id: str | None,
     old_solver_result: dict | None = None,
     requested_route: RouteType | None = None,
+    session_id: int | None = None,
 ) -> SchedulingState:
     return SchedulingState(
         request_id=request_id,
         user_id=user_id,
         user_prompt=prompt,
+        session_id=session_id,
         requested_route=requested_route,
         route=None,
         intent_summary=None,
