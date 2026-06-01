@@ -11,6 +11,7 @@ SUPPORTED_HARD_RULES = {
     "forbid_professor_project",
     "require_professor_role",
     "require_project_session",
+    "custom_bound",
 }
 
 SUPPORTED_SOFT_RULES = {
@@ -19,6 +20,7 @@ SUPPORTED_SOFT_RULES = {
     "avoid_professor_session",
     "penalize_professor_project",
     "prefer_morning",
+    "custom_bound",
 }
 
 

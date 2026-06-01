@@ -1,11 +1,7 @@
-Return this JSON object exactly:
+Return ONLY this JSON object — no professors, projects, or sessions:
 
 {
-  "professors": [{"id": 1, "domain_id": 10, "domain_ids": [10], "specialities": ["software", "ai"], "max_juries": 2}],
-  "projects": [{"id": 100, "domain_id": 10, "domain_keywords": ["software", "engineering"], "supervisor_id": 1}],
-  "sessions": [{"id": 3000, "date": "2026-06-20", "period": "morning"}],
   "constraints": {
-    "hard_max_juries": 2,
     "weights": {
       "workload": 10,
       "expertise": 15,
@@ -13,10 +9,18 @@ Return this JSON object exactly:
       "overload": 20,
       "custom": 1
     },
-    "hard": [{"rule": "require_project_session", "project_id": 100, "session_id": 3000}],
-    "soft": [{"rule": "prefer_project_session", "project_id": 100, "session_id": 3000, "weight": 1.0}]
+    "hard": [
+      {"rule": "require_project_session", "project_id": 100, "session_id": 3000},
+      {"rule": "custom_bound", "description": "Prof 1 cannot be PRESIDENT more than twice", "professor_ids": [1], "roles": ["PRESIDENT"], "operator": "<=", "bound": 2}
+    ],
+    "soft": [
+      {"rule": "prefer_project_session", "project_id": 100, "session_id": 3000, "weight": 1.0},
+      {"rule": "custom_bound", "description": "Soft: prefer Prof 1 to have at most 1 afternoon assignment", "professor_ids": [1], "period": "afternoon", "operator": "<=", "bound": 1, "weight": 3.0}
+    ]
   },
   "unavailabilities": [{"professor_id": 1, "date": "2026-06-22", "period": "afternoon"}],
   "conflicts": [{"professor_a": 1, "professor_b": 2}],
   "constraint_rules": [{"name": "example", "rule": "prefer_morning", "type": "soft", "weight": 1.0, "payload": {"rule": "prefer_morning"}, "enabled": true}]
 }
+
+Omit any top-level key that has no changes (empty list or unchanged weights). Omit professors, projects, and sessions entirely.

@@ -52,11 +52,12 @@ export default function Dashboard() {
 
     async function loadStats() {
       try {
-        const [assignments, slots, sessions, conflicts] = await Promise.all([
+        const [assignments, slots, sessions, conflicts, rooms] = await Promise.all([
           apiRequest('/assignments?limit=200'),
           apiRequest('/slots?limit=200'),
           apiRequest('/sessions?limit=200'),
           apiRequest('/conflicts?limit=200'),
+          apiRequest('/rooms?limit=200'),
         ])
 
         if (!active) return
@@ -65,9 +66,9 @@ export default function Dashboard() {
         const safeSlots = Array.isArray(slots) ? slots : []
         const safeSessions = Array.isArray(sessions) ? sessions : []
         const safeConflicts = Array.isArray(conflicts) ? conflicts : []
+        const safeRooms = Array.isArray(rooms) ? rooms : []
 
         const uniqueDates = new Set(safeSlots.map(slot => slot.date))
-        const uniqueRooms = new Set(safeSlots.map(slot => slot.room))
         const score = safeAssignments.length
           ? Math.max(0, 100 - safeConflicts.length * 5)
           : null
@@ -75,7 +76,7 @@ export default function Dashboard() {
         setStats([
           { value: `${safeAssignments.length}`, label: 'Soutenances' },
           { value: `${uniqueDates.size}`, label: 'Jours' },
-          { value: `${uniqueRooms.size}`, label: 'Salles' },
+          { value: `${safeRooms.length}`, label: 'Salles' },
           { value: `${safeConflicts.length}`, label: 'Conflit' },
           { value: score === null ? '—' : `${score}%`, label: 'Score moyen', green: true },
         ])

@@ -6,7 +6,7 @@ from typing import Any
 from ortools.sat.python import cp_model
 
 from solver.constraints.assumptions import AssumptionRegistry
-from solver.constraints.rule_utils import collect_rule_specs
+from solver.constraints.rule_utils import collect_custom_bound_terms, collect_rule_specs
 from solver.variables import ROLES, VariableBundle
 
 
@@ -426,6 +426,26 @@ def apply_custom_hard_constraints(
             if project_id not in project_ids or session_id not in session_id_set:
                 continue
             _add_constraint(model, vars_.y[(project_id, session_id)] == 1, assumption)
+
+        elif name == "custom_bound":
+            terms = collect_custom_bound_terms(
+                payload,
+                vars_.x,
+                professor_ids,
+                list(project_ids),
+                sessions,
+            )
+            if not terms:
+                continue
+            operator = str(payload.get("operator", "<=")).strip()
+            bound = _as_int(payload.get("bound", 0)) or 0
+            expr = sum(terms)
+            if operator == "<=":
+                _add_constraint(model, expr <= bound, assumption)
+            elif operator == ">=":
+                _add_constraint(model, expr >= bound, assumption)
+            elif operator == "==":
+                _add_constraint(model, expr == bound, assumption)
 
 
 def _as_int(value: Any) -> int | None:

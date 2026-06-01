@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from ortools.sat.python import cp_model
+
 
 WEIGHT_SCALE = 100
 
@@ -92,3 +94,64 @@ def _extract_payload(raw_rule: dict[str, Any]) -> dict[str, Any]:
 
     reserved = {"id", "name", "rule", "type", "weight", "enabled", "payload"}
     return {k: v for k, v in raw_rule.items() if k not in reserved}
+
+
+_ALL_ROLES = ("SUPERVISOR", "PRESIDENT", "EXAMINER")
+
+
+def collect_custom_bound_terms(
+    payload: dict[str, Any],
+    vars_x: dict[tuple[int, int, str, int], cp_model.IntVar],
+    all_professor_ids: list[int],
+    all_project_ids: list[int],
+    all_sessions: list[dict[str, Any]],
+) -> list[cp_model.IntVar]:
+    """Return the list of x-variables that match the filters in a custom_bound payload.
+
+    The caller sums these and applies operator/bound as a hard or soft constraint.
+    Omitting a filter (null / missing) means "match all".
+    """
+    def _to_int_set(raw: Any, fallback: list[int]) -> set[int]:
+        if raw is None:
+            return set(fallback)
+        try:
+            return {int(v) for v in raw}
+        except (TypeError, ValueError):
+            return set(fallback)
+
+    prof_filter = _to_int_set(payload.get("professor_ids"), all_professor_ids)
+    proj_filter = _to_int_set(payload.get("project_ids"), all_project_ids)
+
+    raw_roles = payload.get("roles")
+    role_filter: set[str] = (
+        {str(r).upper() for r in raw_roles if str(r).upper() in _ALL_ROLES}
+        if raw_roles is not None
+        else set(_ALL_ROLES)
+    )
+
+    # Build session filter, applying optional period/date narrowing.
+    period_filter: str | None = payload.get("period")
+    date_filter: str | None = payload.get("date")
+    raw_sess_ids = payload.get("session_ids")
+
+    candidate_sessions = all_sessions
+    if period_filter:
+        candidate_sessions = [s for s in candidate_sessions if str(s.get("period", "")).lower() == period_filter]
+    if date_filter:
+        candidate_sessions = [s for s in candidate_sessions if str(s.get("date", "")) == date_filter]
+
+    if raw_sess_ids is not None:
+        explicit = {int(v) for v in raw_sess_ids}
+        sess_filter = {s["id"] for s in candidate_sessions} & explicit
+    else:
+        sess_filter = {s["id"] for s in candidate_sessions}
+
+    terms: list[cp_model.IntVar] = []
+    for pid in prof_filter:
+        for pr_id in proj_filter:
+            for role in role_filter:
+                for sid in sess_filter:
+                    var = vars_x.get((pid, pr_id, role, sid))
+                    if var is not None:
+                        terms.append(var)
+    return terms

@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import FastAPI
 import redis
+import requests
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -32,6 +33,8 @@ app = FastAPI(title="Juriq Solver Service", version="0.1.0")
 _redis_url = os.getenv("REDIS_URL", "").strip()
 _redis_ttl_seconds = int(os.getenv("REDIS_TTL_SECONDS", "0") or "0")
 _redis_client = redis.Redis.from_url(_redis_url, decode_responses=True) if _redis_url else None
+_reflector_service_url = os.getenv("REFLECTOR_SERVICE_URL", "http://reflector-service:8013").strip()
+_reflector_timeout_seconds = float(os.getenv("REFLECTOR_TIMEOUT_SECONDS", "30") or "30")
 
 
 def _write_result_to_redis(request_id: str, result: dict[str, Any]) -> None:
@@ -45,6 +48,64 @@ def _write_result_to_redis(request_id: str, result: dict[str, Any]) -> None:
         _redis_client.setex(key, _redis_ttl_seconds, payload)
     else:
         _redis_client.set(key, payload)
+
+
+def _trigger_reflector(
+    request_id: str,
+    solver_payload: dict[str, Any],
+    solver_result: dict[str, Any],
+    db_snapshot: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not _reflector_service_url:
+        return None
+    response = requests.post(
+        f"{_reflector_service_url.rstrip('/')}/reflect",
+        json={
+            "request_id": request_id,
+            "solver_result": solver_result,
+            "solver_payload": solver_payload,
+            "db_snapshot": db_snapshot,
+        },
+        timeout=_reflector_timeout_seconds,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _derive_overrides_from_unavailabilities(
+    solver_data: dict[str, Any],
+    assignments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Auto-generate unpin_project overrides for every assignment whose locked
+    session conflicts with a professor unavailability in solver_data.
+
+    Without this, empty overrides cause all assignments to be hard-locked, and
+    the solver becomes INFEASIBLE when a new unavailability blocks a pinned slot.
+    """
+    unavailabilities = solver_data.get("unavailabilities") or []
+    sessions = solver_data.get("sessions") or []
+    if not unavailabilities or not assignments:
+        return []
+
+    session_map = {int(s["id"]): s for s in sessions}
+    blocked: set[tuple[int, str, str]] = {
+        (int(u["professor_id"]), str(u["date"]), str(u["period"]))
+        for u in unavailabilities
+    }
+
+    free_projects: set[int] = set()
+    for asgn in assignments:
+        session = session_map.get(int(asgn["session_id"]))
+        if not session:
+            continue
+        date = str(session["date"])
+        period = str(session["period"])
+        for prof_id in asgn.get("roles", {}).values():
+            if prof_id is not None and (int(prof_id), date, period) in blocked:
+                free_projects.add(int(asgn["project_id"]))
+                break
+
+    return [{"type": "unpin_project", "project_id": pid} for pid in free_projects]
 
 
 @app.get("/health", tags=["health"])
@@ -136,11 +197,25 @@ def update_endpoint(payload: dict[str, Any]) -> dict[str, Any]:
         "existing_request_id"
     ) or payload.get("session_id")
 
-    existing_assignments = payload.pop("existing_assignments", [])
+    # The orchestrator sends a structured envelope: extract the actual solver
+    # payload (translator_payload) and the previous result separately.
+    old_solver_result = payload.pop("old_solver_result", None) or {}
+    translator_payload = payload.pop("translator_payload", None)
+    payload.pop("db_snapshot", None)
+
+    # Use translator_payload as the solver data when available (orchestrator path).
+    # Fall back to the raw payload for direct /update calls (legacy / test path).
+    original_data = translator_payload if translator_payload else payload
+
+    existing_assignments = payload.pop("existing_assignments", None)
     overrides = payload.pop("overrides", [])
 
-    # If no assignments provided, try loading the previous solver result from
-    # Redis using the provided source_request_id.
+    # Prefer assignments carried in the old_solver_result envelope (orchestrator
+    # path), then fall back to Redis, then to an empty list.
+    if not existing_assignments:
+        existing_assignments = old_solver_result.get("assignments") or []
+
+    # If still empty, try loading the previous solver result from Redis.
     if not existing_assignments and _redis_client and source_request_id:
         try:
             key = f"solver:result:{source_request_id}"
@@ -152,8 +227,29 @@ def update_endpoint(payload: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:
             print(f"[solver-service] REDIS READ FAILED: {exc}")
 
-    result = update(payload, existing_assignments, overrides)
+    # When no explicit overrides were provided, derive them automatically from
+    # unavailabilities in the new payload so that affected pinned assignments
+    # are freed for re-solving instead of causing INFEASIBLE.
+    if not overrides:
+        overrides = _derive_overrides_from_unavailabilities(original_data, existing_assignments)
+        if overrides:
+            print(f"[solver-service] Auto-derived {len(overrides)} overrides from unavailabilities")
+
+    result = update(original_data, existing_assignments, overrides)
     result["request_id"] = request_id
+
+    try:
+        reflector_result = _trigger_reflector(
+            request_id,
+            original_data,
+            result,
+            db_snapshot=payload.get("db_snapshot"),
+        )
+        if reflector_result is not None:
+            result["reflector_result"] = reflector_result
+    except Exception as exc:
+        print(f"[solver-service] REFLECTOR CALL FAILED: {exc}")
+        result["reflector_error"] = str(exc)
 
     try:
         _write_result_to_redis(request_id, result)

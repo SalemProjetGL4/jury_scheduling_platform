@@ -80,8 +80,10 @@ def merge_llm_constraints(
             recognized.append({"name": str(sanitized["rule"]), "source": "llm"})
 
     for raw_rule in llm_payload.get("constraint_rules", []) if isinstance(llm_payload, dict) else []:
-        if not isinstance(raw_rule, dict) or not raw_rule.get("enabled", True):
+        if not isinstance(raw_rule, dict):
             continue
+
+        is_enabled = raw_rule.get("enabled", True)
 
         declared_type = str(raw_rule.get("type", "")).strip().lower()
         if declared_type not in {"hard", "soft"}:
@@ -95,6 +97,22 @@ def merge_llm_constraints(
 
         inferred_name = str(payload.get("rule", "")).strip().lower()
         inferred_type = normalized_rule_type(inferred_name) or declared_type
+
+        if not is_enabled:
+            # Rule was disabled/removed by the user — purge it from constraints.hard/soft
+            # so the solver does not apply it, even if it came from the DB snapshot.
+            merged_constraints["hard"] = [
+                r for r in merged_constraints["hard"]
+                if str(r.get("rule", "")).strip().lower() != inferred_name
+            ]
+            merged_constraints["soft"] = [
+                r for r in merged_constraints["soft"]
+                if str(r.get("rule", "")).strip().lower() != inferred_name
+            ]
+            hard_seen = {rule_signature(r) for r in merged_constraints["hard"]}
+            soft_seen = {rule_signature(r) for r in merged_constraints["soft"]}
+            recognized.append({"name": f"{inferred_name}_disabled", "source": "llm"})
+            continue
 
         sanitized, reason = sanitize_rule(payload, rule_type=inferred_type, **id_sets)
         if sanitized is None:
@@ -118,5 +136,107 @@ def merge_llm_constraints(
                 soft_seen.add(sig)
                 merged_constraints["soft"].append(sanitized)
                 recognized.append({"name": str(sanitized["rule"]), "source": "llm"})
+
+    # --- Unavailabilities ---
+    # The LLM output is the intended final state.  We compare against the snapshot
+    # (already in merged) to classify each entry as new / existing / removed.
+    snapshot_unavail_keys: set[tuple[int, str, str]] = {
+        (int(u["professor_id"]), str(u["date"]), str(u["period"]))
+        for u in merged.get("unavailabilities", [])
+        if isinstance(u, dict) and "professor_id" in u
+    }
+
+    if isinstance(llm_payload, dict) and "unavailabilities" in llm_payload:
+        validated_unavails: list[dict[str, Any]] = []
+        seen_unavail_keys: set[tuple[int, str, str]] = set()
+
+        for unavail in llm_payload.get("unavailabilities", []):
+            if not isinstance(unavail, dict):
+                continue
+            pid = unavail.get("professor_id")
+            date_val = unavail.get("date")
+            period_val = unavail.get("period")
+            if pid is None or date_val is None or period_val is None:
+                continue
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
+                continue
+
+            if pid not in professor_ids:
+                unrecognized.append(
+                    {
+                        "raw_text": json.dumps(unavail, ensure_ascii=True),
+                        "inferred_type": "hard",
+                        "reason_unrecognized": f"Professor ID {pid} not found in snapshot",
+                    }
+                )
+                continue
+
+            key = (pid, str(date_val), str(period_val))
+            if key in seen_unavail_keys:
+                continue
+            seen_unavail_keys.add(key)
+            validated_unavails.append({"professor_id": pid, "date": str(date_val), "period": str(period_val)})
+            is_existing = key in snapshot_unavail_keys
+            recognized.append(
+                {"name": "declared_unavailability_existing" if is_existing else "declared_unavailability_new", "source": "llm"}
+            )
+
+        for key in snapshot_unavail_keys:
+            if key not in seen_unavail_keys:
+                recognized.append({"name": "declared_unavailability_removed", "source": "llm"})
+
+        merged["unavailabilities"] = validated_unavails
+
+    # --- Conflicts ---
+    # Same pattern: LLM output is the intended final state.
+    snapshot_conflict_keys: set[tuple[int, int]] = {
+        (min(c["professor_a"], c["professor_b"]), max(c["professor_a"], c["professor_b"]))
+        for c in merged.get("conflicts", [])
+        if isinstance(c, dict) and "professor_a" in c and "professor_b" in c
+    }
+
+    if isinstance(llm_payload, dict) and "conflicts" in llm_payload:
+        validated_conflicts: list[dict[str, Any]] = []
+        seen_conflict_keys: set[tuple[int, int]] = set()
+
+        for conflict in llm_payload.get("conflicts", []):
+            if not isinstance(conflict, dict):
+                continue
+            pa = conflict.get("professor_a")
+            pb = conflict.get("professor_b")
+            if pa is None or pb is None:
+                continue
+            try:
+                pa, pb = int(pa), int(pb)
+            except (TypeError, ValueError):
+                continue
+
+            if pa not in professor_ids or pb not in professor_ids:
+                unrecognized.append(
+                    {
+                        "raw_text": json.dumps(conflict, ensure_ascii=True),
+                        "inferred_type": "hard",
+                        "reason_unrecognized": f"Professor ID {pa} or {pb} not found in snapshot",
+                    }
+                )
+                continue
+
+            key = (min(pa, pb), max(pa, pb))
+            if key in seen_conflict_keys:
+                continue
+            seen_conflict_keys.add(key)
+            validated_conflicts.append({"professor_a": pa, "professor_b": pb})
+            is_existing = key in snapshot_conflict_keys
+            recognized.append(
+                {"name": "conflict_of_interest_existing" if is_existing else "conflict_of_interest_new", "source": "llm"}
+            )
+
+        for key in snapshot_conflict_keys:
+            if key not in seen_conflict_keys:
+                recognized.append({"name": "conflict_of_interest_removed", "source": "llm"})
+
+        merged["conflicts"] = validated_conflicts
 
     return merged, recognized, unrecognized

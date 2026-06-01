@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     gateway_timeout_seconds: int = 30
     solver_timeout_seconds: int = 600
+    updater_timeout_seconds: int = 120
 
 
 settings = Settings()

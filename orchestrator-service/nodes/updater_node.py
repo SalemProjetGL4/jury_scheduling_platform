@@ -39,6 +39,10 @@ def updater_node(state: SchedulingState) -> SchedulingState:
 
         state["updater_result"] = result
 
+        reflector_result = result.get("reflector_result")
+        if reflector_result is not None:
+            state["reflector_result"] = reflector_result
+
         if new_status == "INFEASIBLE" and original_status in ("OPTIMAL", "FEASIBLE"):
             state["solver_result"] = old_result
             result = dict(result)
