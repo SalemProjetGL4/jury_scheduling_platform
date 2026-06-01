@@ -146,7 +146,7 @@ class ProjectImportReport(BaseModel):
 class GenerateSlotsRequest(BaseModel):
     start_date: dt.date
     end_date: dt.date
-    room_id: int
+    room_ids: list[int]
 
 
 class GenerateSlotsResponse(BaseModel):

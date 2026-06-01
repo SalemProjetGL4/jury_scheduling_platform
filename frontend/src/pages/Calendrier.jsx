@@ -310,6 +310,7 @@ function buildCalendarData(slots, assignments, professors, projects = [], studen
       prof: studentName, title: projectTitle,
       juryInfo: `Enc: ${supervisorName} · Prés: ${presidentName} · Exam: ${examinerName}`,
       studentName, projectTitle, supervisorName, presidentName, examinerName,
+      filiereId: student?.filiere_id ?? null,
       jury: ((assignment.id || 0) % 5) + 1,
     }
   }).filter(Boolean)

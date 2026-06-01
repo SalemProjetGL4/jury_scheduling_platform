@@ -1,6 +1,8 @@
 import datetime as dt
 from datetime import timedelta
 from typing import Any
+import csv
+import io
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
@@ -145,6 +147,104 @@ def import_professors_endpoint(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+
+class ProfessorUploadCsvResponse(BaseModel):
+    inserted: int
+    skipped: int
+    errors: list[str]
+
+
+@professor_router.post(
+    "/upload-csv",
+    response_model=ProfessorUploadCsvResponse,
+    status_code=status.HTTP_201_CREATED,
+    name="upload_professors_csv",
+)
+async def upload_professors_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    content = await file.read()
+    try:
+        text = content.decode("utf-8-sig")
+    except Exception:
+        text = content.decode("utf-8", errors="replace")
+
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV must include a header row")
+
+    existing_email_rows = db.query(models.Professor.email).all()
+    existing_emails = {str(email).strip().lower() for (email,) in existing_email_rows if email}
+
+    inserted = 0
+    skipped = 0
+    errors: list[str] = []
+
+    for row_index, row in enumerate(reader, start=2):
+        try:
+            if not isinstance(row, dict):
+                skipped += 1
+                errors.append(f"row {row_index}: invalid row")
+                continue
+
+            name = str((row.get("name") or "")).strip()
+            email = str((row.get("email") or "")).strip().lower()
+            dept_raw = str((row.get("department_id") or "")).strip()
+            max_raw = str((row.get("max_juries") or "")).strip()
+            prefs_raw = str((row.get("preferences") or "")).strip()
+
+            if not name or not email:
+                skipped += 1
+                errors.append(f"row {row_index}: missing name or email")
+                continue
+
+            if email in existing_emails:
+                skipped += 1
+                continue
+
+            try:
+                department_id = int(dept_raw)
+            except Exception:
+                skipped += 1
+                errors.append(f"row {row_index}: invalid department_id")
+                continue
+
+            try:
+                max_juries = int(max_raw)
+            except Exception:
+                skipped += 1
+                errors.append(f"row {row_index}: invalid max_juries")
+                continue
+
+            preferences = [p.strip() for p in prefs_raw.split(";") if p.strip()] if prefs_raw else []
+
+            professor = models.Professor(
+                name=name,
+                email=email,
+                department_id=department_id,
+                max_juries=max_juries,
+                preferences=preferences or None,
+            )
+            db.add(professor)
+            db.flush()
+
+            existing_emails.add(email)
+            inserted += 1
+
+        except IntegrityError:
+            db.rollback()
+            skipped += 1
+            continue
+        except Exception as exc:
+            db.rollback()
+            skipped += 1
+            errors.append(f"row {row_index}: {exc}")
+            continue
+
+    db.commit()
+    return ProfessorUploadCsvResponse(inserted=inserted, skipped=skipped, errors=errors)
+
 @professor_router.get(
     "/{professor_id}/unavailabilities",
     response_model=list[schemas.UnavailabilityOut],
@@ -193,6 +293,12 @@ def remove_professor_domain(professor_id: int, domain_id: int, db: Session = Dep
         db.commit()
     return None
 
+
+# Static routes (/import, /upload-csv) were appended after build_crud_router already
+# registered the /{item_id} wildcards. Sort so that exact paths come first; otherwise
+# GET/PUT/DELETE /{item_id} produce a partial match before POST /upload-csv is reached,
+# which returns 405 Method Not Allowed instead of routing to the correct handler.
+professor_router.routes.sort(key=lambda r: "{" in getattr(r, "path", ""))
 
 student_router = build_crud_router(
     model=models.Student,
@@ -254,10 +360,12 @@ def generate_slots(
 ):
     if payload.end_date < payload.start_date:
         raise HTTPException(status_code=400, detail="end_date must be >= start_date")
+    if not payload.room_ids:
+        raise HTTPException(status_code=400, detail="At least one room_id is required")
 
-    room = db.query(models.Room).filter(models.Room.id == payload.room_id).first()
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+    for room_id in payload.room_ids:
+        if not db.query(models.Room).filter(models.Room.id == room_id).first():
+            raise HTTPException(status_code=404, detail=f"Room {room_id} not found")
 
     session = models.Session(
         status="planned",
@@ -269,42 +377,50 @@ def generate_slots(
 
     slots_created = 0
     days_covered = 0
-    current = payload.start_date
-    while current <= payload.end_date:
-        weekday = current.weekday()  # 0=Monday … 6=Sunday
-        if weekday == 6:  # skip Sunday
-            current += timedelta(days=1)
-            continue
 
-        days_covered += 1
-        is_saturday = weekday == 5
+    # Count days once (independent of room count)
+    cur = payload.start_date
+    while cur <= payload.end_date:
+        if cur.weekday() != 6:
+            days_covered += 1
+        cur += timedelta(days=1)
 
-        for slot_num in range(1, 5):
-            start_tm = dt.datetime.combine(current, dt.time(7 + slot_num, 0)) # 8:00 -> 11:00
-            end_tm = start_tm + timedelta(hours=1)
-            db.add(models.Slot(
-                start_time=start_tm,
-                end_time=end_tm,
-                slot_number=slot_num,
-                room_id=payload.room_id,
-                session_id=session.id,
-            ))
-            slots_created += 1
+    for room_id in payload.room_ids:
+        current = payload.start_date
+        while current <= payload.end_date:
+            weekday = current.weekday()  # 0=Monday … 6=Sunday
+            if weekday == 6:  # skip Sunday
+                current += timedelta(days=1)
+                continue
 
-        if not is_saturday:
+            is_saturday = weekday == 5
+
             for slot_num in range(1, 5):
-                start_tm = dt.datetime.combine(current, dt.time(12 + slot_num, 0)) # 13:00 -> 16:00
+                start_tm = dt.datetime.combine(current, dt.time(7 + slot_num, 0)) # 8:00 -> 11:00
                 end_tm = start_tm + timedelta(hours=1)
                 db.add(models.Slot(
                     start_time=start_tm,
                     end_time=end_tm,
-                    slot_number=slot_num + 4, # 5 to 8
-                    room_id=payload.room_id,
+                    slot_number=slot_num,
+                    room_id=room_id,
                     session_id=session.id,
                 ))
                 slots_created += 1
 
-        current += timedelta(days=1)
+            if not is_saturday:
+                for slot_num in range(1, 5):
+                    start_tm = dt.datetime.combine(current, dt.time(12 + slot_num, 0)) # 13:00 -> 16:00
+                    end_tm = start_tm + timedelta(hours=1)
+                    db.add(models.Slot(
+                        start_time=start_tm,
+                        end_time=end_tm,
+                        slot_number=slot_num + 4, # 5 to 8
+                        room_id=room_id,
+                        session_id=session.id,
+                    ))
+                    slots_created += 1
+
+            current += timedelta(days=1)
 
     db.commit()
     return schemas.GenerateSlotsResponse(

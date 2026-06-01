@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import {
   Users, Calendar, DoorOpen, FileText,
   Pencil, Trash2, Loader2, Plus, Search, X, Upload,
-  Clock, AlertTriangle,
+  Clock, AlertTriangle, Download,
 } from 'lucide-react'
 import { apiRequest } from '../services/api'
 
@@ -83,6 +83,17 @@ function CenteredSpinner() {
   return <div style={{ display: 'flex', justifyContent: 'center', padding: '32px' }}><Spinner /></div>
 }
 
+function downloadCsv(filename, rows) {
+  const csv = rows.join('\n') + '\n'
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 // ── Tab 1: Professeurs ────────────────────────────────────────────────────────
 
 const PROF_EMPTY = { name: '', email: '', department_id: '', max_juries: 3, domain_ids: [] }
@@ -113,12 +124,21 @@ function ProfesseursTab() {
   const [domains, setDomains]       = useState([])
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState('')
+  const [uploading, setUploading]   = useState(false)
+  const [uploadSuccess, setUploadSuccess] = useState('')
+  const [uploadErrors, setUploadErrors]   = useState([])
   const [search, setSearch]         = useState('')
   const [showForm, setShowForm]     = useState(false)
   const [editingProf, setEditingProf] = useState(null)
   const [form, setForm]             = useState(PROF_EMPTY)
   const [formError, setFormError]   = useState('')
   const [saving, setSaving]         = useState(false)
+  const [selectedProfIds, setSelectedProfIds] = useState(new Set())
+  const [deleting, setDeleting]     = useState(false)
+  const [deleteResult, setDeleteResult] = useState('')
+
+  const csvInputRef       = useRef(null)
+  const headerCheckboxRef = useRef(null)
 
   useEffect(() => { load() }, [])
 
@@ -136,6 +156,41 @@ function ProfesseursTab() {
       setError(e.message || 'Erreur de chargement')
     } finally {
       setLoading(false)
+    }
+  }
+
+  function openCsvPicker() {
+    setUploadSuccess('')
+    setUploadErrors([])
+    if (csvInputRef.current) {
+      csvInputRef.current.value = ''
+      csvInputRef.current.click()
+    }
+  }
+
+  async function handleCsvSelected(e) {
+    const file = e.target.files && e.target.files[0]
+    if (!file) return
+
+    setUploading(true)
+    setUploadSuccess('')
+    setUploadErrors([])
+    setError('')
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const result = await apiRequest('/professors/upload-csv', { method: 'POST', body: formData })
+      const inserted = Number(result?.inserted || 0)
+      const skipped  = Number(result?.skipped || 0)
+      const errs     = Array.isArray(result?.errors) ? result.errors : []
+      setUploadSuccess(`Import terminé : ${inserted} inséré(s), ${skipped} ignoré(s).`)
+      setUploadErrors(errs)
+      await load()
+    } catch (err) {
+      setError(err.message || 'Erreur lors de l\'upload CSV')
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -222,9 +277,43 @@ function ProfesseursTab() {
     if (!window.confirm(`Supprimer ${prof.name} ?`)) return
     try {
       await apiRequest(`/professors/${prof.id}`, { method: 'DELETE' })
+      setSelectedProfIds(prev => { const n = new Set(prev); n.delete(prof.id); return n })
       await load()
     } catch (e) {
       setError(e.message || 'Erreur lors de la suppression')
+    }
+  }
+
+  function toggleProfSelection(id) {
+    setSelectedProfIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  function handleProfHeaderCheckbox() {
+    if (allVisibleSelected) {
+      setSelectedProfIds(prev => { const n = new Set(prev); visibleIds.forEach(id => n.delete(id)); return n })
+    } else {
+      setSelectedProfIds(prev => new Set([...prev, ...visibleIds]))
+    }
+  }
+
+  async function handleBulkDelete() {
+    const n = selectedProfIds.size
+    if (!window.confirm(`Supprimer ${n} professeur(s) ? Cette action est irréversible.`)) return
+    setDeleting(true)
+    setDeleteResult('')
+    try {
+      await Promise.all([...selectedProfIds].map(id => apiRequest(`/professors/${id}`, { method: 'DELETE' })))
+      setSelectedProfIds(new Set())
+      setDeleteResult(`${n} professeur(s) supprimé(s).`)
+      await load()
+    } catch (e) {
+      setError(e.message || 'Erreur lors de la suppression')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -235,15 +324,30 @@ function ProfesseursTab() {
     p.name.toLowerCase().includes(search.toLowerCase()) ||
     p.email.toLowerCase().includes(search.toLowerCase())
   )
+  const visibleIds            = filtered.map(p => p.id)
+  const selectedVisibleCount  = visibleIds.filter(id => selectedProfIds.has(id)).length
+  const allVisibleSelected    = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length
+
+  useEffect(() => {
+    if (!headerCheckboxRef.current) return
+    headerCheckboxRef.current.indeterminate = selectedVisibleCount > 0 && !allVisibleSelected
+  }, [selectedProfIds, filtered])
 
   return (
     <div>
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
         <h2 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#0f172a' }}>
           Professeurs ({professors.length})
         </h2>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+          <input
+            ref={csvInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            onChange={handleCsvSelected}
+            style={{ display: 'none' }}
+          />
           <div style={{ position: 'relative' }}>
             <Search size={13} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', pointerEvents: 'none' }} />
             <input
@@ -253,65 +357,141 @@ function ProfesseursTab() {
               style={{ ...inputStyle, paddingLeft: '28px', width: '200px' }}
             />
           </div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button style={{ ...btnGhost, minWidth: '140px', justifyContent: 'center' }} onClick={openCsvPicker} disabled={uploading}>
+                <Upload size={14} /> {uploading ? 'Upload…' : 'Importer CSV'}
+              </button>
+              <button style={btnGhost} onClick={() => downloadCsv('professors_template.csv', [
+                'name,email,department_id,max_juries,preferences,domains',
+                'Jean Dupont,jean.dupont@univ.fr,1,3,IA;ML,Machine Learning;Intelligence Artificielle',
+              ])}>
+                <Download size={14} /> Modèle CSV
+              </button>
+            </div>
+            <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+              Colonnes&nbsp;:&nbsp;
+              <code style={{ background: '#f1f5f9', padding: '1px 4px', borderRadius: '3px', fontSize: '10px' }}>
+                name, email, department_id, max_juries, preferences, domains
+              </code>
+              &nbsp;— préférences et domaines séparés par «&nbsp;;&nbsp;»
+            </span>
+          </div>
           <button style={btnPrimary} onClick={openAdd}>
             <Plus size={14} /> Ajouter
           </button>
         </div>
       </div>
 
-      {/* Inline form */}
+      <InlineSuccess msg={uploadSuccess} />
+      {uploadErrors.length > 0 && (
+        <div style={{ color: '#dc2626', fontSize: '12px', background: '#fef2f2', border: '0.5px solid #fecaca', borderRadius: '6px', padding: '8px 12px', marginTop: '8px' }}>
+          <div style={{ fontWeight: 600, marginBottom: '4px' }}>Erreurs ({uploadErrors.length})</div>
+          <div style={{ display: 'grid', gap: '2px' }}>
+            {uploadErrors.map((msg, idx) => (
+              <div key={idx}>{String(msg)}</div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Modal — add / edit */}
       {showForm && (
-        <div style={{ background: '#f8fafc', border: '0.5px solid #e2e8f0', borderRadius: '8px', padding: '16px', marginBottom: '16px' }}>
-          <p style={{ margin: '0 0 12px 0', fontSize: '13px', fontWeight: 600, color: '#0f172a' }}>
-            {editingProf ? `Modifier ${editingProf.name}` : 'Nouveau professeur'}
-          </p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '10px', marginBottom: '12px' }}>
-            <input placeholder="Nom complet"    value={form.name}          onChange={field('name')}          style={inputStyle} />
-            <input placeholder="Email"          value={form.email}         onChange={field('email')}         style={inputStyle} type="email" />
-            <input placeholder="Department ID"  value={form.department_id} onChange={field('department_id')} style={inputStyle} type="number" min="1" />
-            <input placeholder="Max jurys"      value={form.max_juries}    onChange={field('max_juries')}    style={inputStyle} type="number" min="0" />
-          </div>
-
-          {/* Domain picker */}
-          <div style={{ marginBottom: '12px' }}>
-            <label style={labelStyle}>Domaines</label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <select
-                value=""
-                onChange={e => { addDomain(e.target.value); e.target.value = '' }}
-                style={{ ...inputStyle, width: 'auto', minWidth: '200px' }}
-              >
-                <option value="">— Ajouter un domaine —</option>
-                {availableDomains.map(d => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
-                ))}
-              </select>
-              {form.domain_ids.map(id => (
-                <DomainChip key={id} name={domainMap[id] ?? `#${id}`} onRemove={() => removeDomain(id)} />
-              ))}
-              {form.domain_ids.length === 0 && (
-                <span style={{ fontSize: '12px', color: '#94a3b8' }}>Aucun domaine sélectionné</span>
-              )}
+        <div
+          onClick={closeForm}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: '12px', padding: '24px', width: '560px', maxWidth: '95vw', boxShadow: '0 20px 60px rgba(0,0,0,0.15)', border: '0.5px solid #e2e8f0' }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+              <p style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: '#0f172a' }}>
+                {editingProf ? `Modifier ${editingProf.name}` : 'Nouveau professeur'}
+              </p>
+              <button onClick={closeForm} style={{ ...btnIcon, color: '#64748b' }}><X size={16} /></button>
             </div>
-          </div>
 
-          <InlineError msg={formError} />
-          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-            <button style={btnPrimary} onClick={handleSave} disabled={saving}>
-              {saving ? 'Sauvegarde…' : editingProf ? 'Mettre à jour' : 'Créer'}
-            </button>
-            <button style={btnGhost} onClick={closeForm}>Annuler</button>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '12px' }}>
+              <div>
+                <label style={labelStyle}>Nom complet</label>
+                <input value={form.name} onChange={field('name')} style={inputStyle} placeholder="Jean Dupont" />
+              </div>
+              <div>
+                <label style={labelStyle}>Email</label>
+                <input value={form.email} onChange={field('email')} style={inputStyle} type="email" placeholder="jean@univ.fr" />
+              </div>
+              <div>
+                <label style={labelStyle}>Department ID</label>
+                <input value={form.department_id} onChange={field('department_id')} style={inputStyle} type="number" min="1" placeholder="1" />
+              </div>
+              <div>
+                <label style={labelStyle}>Max jurys</label>
+                <input value={form.max_juries} onChange={field('max_juries')} style={inputStyle} type="number" min="0" placeholder="3" />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={labelStyle}>Domaines</label>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <select
+                  value=""
+                  onChange={e => { addDomain(e.target.value); e.target.value = '' }}
+                  style={{ ...inputStyle, width: 'auto', minWidth: '200px' }}
+                >
+                  <option value="">— Ajouter un domaine —</option>
+                  {availableDomains.map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+                {form.domain_ids.map(id => (
+                  <DomainChip key={id} name={domainMap[id] ?? `#${id}`} onRemove={() => removeDomain(id)} />
+                ))}
+                {form.domain_ids.length === 0 && (
+                  <span style={{ fontSize: '12px', color: '#94a3b8' }}>Aucun domaine sélectionné</span>
+                )}
+              </div>
+            </div>
+
+            <InlineError msg={formError} />
+            <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+              <button style={btnPrimary} onClick={handleSave} disabled={saving}>
+                {saving ? 'Sauvegarde…' : editingProf ? 'Mettre à jour' : 'Créer'}
+              </button>
+              <button style={btnGhost} onClick={closeForm}>Annuler</button>
+            </div>
           </div>
         </div>
       )}
 
       <InlineError msg={error} />
+      {deleteResult && <InlineSuccess msg={`✓ ${deleteResult}`} />}
+
+      {selectedProfIds.size > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', background: '#fef9c3', border: '0.5px solid #fde047', borderRadius: '6px', marginBottom: '12px' }}>
+          <span style={{ fontSize: '13px', color: '#713f12', fontWeight: 500 }}>
+            {selectedProfIds.size} professeur(s) sélectionné(s)
+          </span>
+          <button onClick={handleBulkDelete} disabled={deleting}
+            style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 12px', fontSize: '12px', fontWeight: 500, cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.7 : 1, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            <Trash2 size={13} />{deleting ? 'Suppression…' : 'Supprimer la sélection'}
+          </button>
+          <button onClick={() => setSelectedProfIds(new Set())}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px', color: '#92400e' }}>
+            Désélectionner tout
+          </button>
+        </div>
+      )}
 
       {loading ? <CenteredSpinner /> : (
         <div style={{ background: '#fff', border: '0.5px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
           <table style={tableStyle}>
             <thead>
               <tr>
+                <th style={{ ...thStyle, width: '36px', textAlign: 'center' }}>
+                  <input type="checkbox" ref={headerCheckboxRef} checked={allVisibleSelected}
+                    onChange={handleProfHeaderCheckbox} style={{ cursor: 'pointer' }} />
+                </th>
                 <th style={thStyle}>Nom</th>
                 <th style={thStyle}>Email</th>
                 <th style={thStyle}>Département</th>
@@ -322,11 +502,17 @@ function ProfesseursTab() {
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: 'center', color: '#94a3b8' }}>Aucun résultat</td></tr>
+                <tr><td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#94a3b8' }}>Aucun résultat</td></tr>
               ) : filtered.map(prof => (
-                <tr key={prof.id} style={{ transition: 'background 0.1s' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#f8fafc' }}
-                  onMouseLeave={e => { e.currentTarget.style.background = '' }}>
+                <tr key={prof.id}
+                  onClick={() => toggleProfSelection(prof.id)}
+                  style={{ cursor: 'pointer', background: selectedProfIds.has(prof.id) ? '#eff6ff' : undefined, transition: 'background 0.1s' }}
+                  onMouseEnter={e => { if (!selectedProfIds.has(prof.id)) e.currentTarget.style.background = '#f8fafc' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = selectedProfIds.has(prof.id) ? '#eff6ff' : '' }}>
+                  <td style={{ ...tdStyle, width: '36px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                    <input type="checkbox" checked={selectedProfIds.has(prof.id)}
+                      onChange={() => toggleProfSelection(prof.id)} style={{ cursor: 'pointer' }} />
+                  </td>
                   <td style={{ ...tdStyle, fontWeight: 500 }}>{prof.name}</td>
                   <td style={{ ...tdStyle, color: '#64748b' }}>{prof.email}</td>
                   <td style={tdStyle}>{prof.department_id}</td>
@@ -341,7 +527,7 @@ function ProfesseursTab() {
                       }
                     </div>
                   </td>
-                  <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
                     <button style={btnIcon} onClick={() => openEdit(prof)} title="Modifier">
                       <Pencil size={14} />
                     </button>
@@ -372,6 +558,9 @@ function SessionsTab() {
   const [genProgress, setGenProgress]     = useState('')
   const [genResult, setGenResult]         = useState(null)
   const [genError, setGenError]           = useState('')
+  const [selectedSessionIds, setSelectedSessionIds] = useState(new Set())
+  const [deletingSessions, setDeletingSessions] = useState(false)
+  const sessHeaderRef = useRef(null)
 
   useEffect(() => {
     Promise.all([
@@ -397,27 +586,20 @@ function SessionsTab() {
     setGenerating(true)
     setGenError('')
     setGenResult(null)
-    let totalSlots = 0, created = 0
-    for (let i = 0; i < selectedRoomIds.length; i++) {
-      const roomId = selectedRoomIds[i]
-      const room = rooms.find(r => r.id === roomId)
-      setGenProgress(`Salle ${i + 1}/${selectedRoomIds.length} (${room?.name ?? roomId})…`)
-      try {
-        const res = await apiRequest('/sessions/generate-slots', {
-          method: 'POST',
-          body: { start_date: startDate, end_date: endDate, room_id: roomId },
-        })
-        totalSlots += res.slots_created || 0
-        created++
-      } catch (e) {
-        setGenError(`Erreur pour ${room?.name ?? roomId} : ${e.message}`)
-        setGenerating(false)
-        setGenProgress('')
-        return
-      }
+    setGenProgress('Génération en cours…')
+    try {
+      const res = await apiRequest('/sessions/generate-slots', {
+        method: 'POST',
+        body: { start_date: startDate, end_date: endDate, room_ids: selectedRoomIds },
+      })
+      setGenProgress('')
+      setGenResult({ created: 1, totalSlots: res.slots_created || 0 })
+    } catch (e) {
+      setGenError(e.message)
+      setGenerating(false)
+      setGenProgress('')
+      return
     }
-    setGenProgress('')
-    setGenResult({ created, totalSlots })
     setGenerating(false)
     const updated = await apiRequest('/sessions?limit=50').catch(() => null)
     if (Array.isArray(updated)) setSessions(updated)
@@ -428,10 +610,51 @@ function SessionsTab() {
     try {
       await apiRequest(`/sessions/${s.id}`, { method: 'DELETE' })
       setSessions(cur => cur.filter(x => x.id !== s.id))
+      setSelectedSessionIds(prev => { const n = new Set(prev); n.delete(s.id); return n })
     } catch (e) {
       alert(e.message || 'Erreur lors de la suppression')
     }
   }
+
+  function toggleSessionSelection(id) {
+    setSelectedSessionIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  function handleSessHeaderCheckbox() {
+    const all = sessions.every(s => selectedSessionIds.has(s.id))
+    if (all) {
+      setSelectedSessionIds(prev => { const n = new Set(prev); sessions.forEach(s => n.delete(s.id)); return n })
+    } else {
+      setSelectedSessionIds(prev => new Set([...prev, ...sessions.map(s => s.id)]))
+    }
+  }
+
+  async function handleBulkDeleteSessions() {
+    const n = selectedSessionIds.size
+    if (!window.confirm(`Supprimer ${n} session(s) ? Cette action est irréversible.`)) return
+    setDeletingSessions(true)
+    try {
+      await Promise.all([...selectedSessionIds].map(id => apiRequest(`/sessions/${id}`, { method: 'DELETE' })))
+      setSessions(cur => cur.filter(s => !selectedSessionIds.has(s.id)))
+      setSelectedSessionIds(new Set())
+    } catch (e) {
+      alert(e.message || 'Erreur lors de la suppression')
+    } finally {
+      setDeletingSessions(false)
+    }
+  }
+
+  const allSessionsSelected = sessions.length > 0 && sessions.every(s => selectedSessionIds.has(s.id))
+  const someSessionsSelected = sessions.some(s => selectedSessionIds.has(s.id))
+
+  useEffect(() => {
+    if (!sessHeaderRef.current) return
+    sessHeaderRef.current.indeterminate = someSessionsSelected && !allSessionsSelected
+  }, [selectedSessionIds, sessions])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -501,6 +724,21 @@ function SessionsTab() {
       {/* Existing sessions */}
       <div>
         <h3 style={{ ...sectionTitle, marginBottom: '12px' }}>Sessions existantes ({sessions.length})</h3>
+
+        {selectedSessionIds.size > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', background: '#fef9c3', border: '0.5px solid #fde047', borderRadius: '6px', marginBottom: '12px' }}>
+            <span style={{ fontSize: '13px', color: '#713f12', fontWeight: 500 }}>{selectedSessionIds.size} session(s) sélectionnée(s)</span>
+            <button onClick={handleBulkDeleteSessions} disabled={deletingSessions}
+              style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 12px', fontSize: '12px', fontWeight: 500, cursor: deletingSessions ? 'not-allowed' : 'pointer', opacity: deletingSessions ? 0.7 : 1, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+              <Trash2 size={13} />{deletingSessions ? 'Suppression…' : 'Supprimer la sélection'}
+            </button>
+            <button onClick={() => setSelectedSessionIds(new Set())}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px', color: '#92400e' }}>
+              Désélectionner tout
+            </button>
+          </div>
+        )}
+
         {loading ? <CenteredSpinner /> : sessions.length === 0 ? (
           <p style={{ color: '#94a3b8', fontSize: '13px' }}>Aucune session créée.</p>
         ) : (
@@ -508,6 +746,10 @@ function SessionsTab() {
             <table style={tableStyle}>
               <thead>
                 <tr>
+                  <th style={{ ...thStyle, width: '36px', textAlign: 'center' }}>
+                    <input type="checkbox" ref={sessHeaderRef} checked={allSessionsSelected}
+                      onChange={handleSessHeaderCheckbox} style={{ cursor: 'pointer' }} />
+                  </th>
                   <th style={thStyle}>ID</th>
                   <th style={thStyle}>Statut</th>
                   <th style={thStyle}>Début</th>
@@ -517,7 +759,15 @@ function SessionsTab() {
               </thead>
               <tbody>
                 {sessions.map(s => (
-                  <tr key={s.id}>
+                  <tr key={s.id}
+                    onClick={() => toggleSessionSelection(s.id)}
+                    style={{ cursor: 'pointer', background: selectedSessionIds.has(s.id) ? '#eff6ff' : undefined, transition: 'background 0.1s' }}
+                    onMouseEnter={e => { if (!selectedSessionIds.has(s.id)) e.currentTarget.style.background = '#f8fafc' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = selectedSessionIds.has(s.id) ? '#eff6ff' : '' }}>
+                    <td style={{ ...tdStyle, width: '36px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                      <input type="checkbox" checked={selectedSessionIds.has(s.id)}
+                        onChange={() => toggleSessionSelection(s.id)} style={{ cursor: 'pointer' }} />
+                    </td>
                     <td style={{ ...tdStyle, color: '#64748b' }}>#{s.id}</td>
                     <td style={tdStyle}>
                       <span style={{ background: '#f0fdf4', color: '#166534', fontSize: '11px', padding: '2px 8px', borderRadius: '99px', border: '0.5px solid #bbf7d0' }}>
@@ -526,7 +776,7 @@ function SessionsTab() {
                     </td>
                     <td style={tdStyle}>{s.start_date}</td>
                     <td style={tdStyle}>{s.end_date}</td>
-                    <td style={{ ...tdStyle, textAlign: 'right' }}>
+                    <td style={{ ...tdStyle, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
                       <button style={{ ...btnIcon, color: '#ef4444' }} onClick={() => handleDeleteSession(s)} title="Supprimer">
                         <Trash2 size={14} />
                       </button>
@@ -552,6 +802,8 @@ function SallesTab() {
   const [form, setForm]               = useState({ name: '' })
   const [formError, setFormError]     = useState('')
   const [saving, setSaving]           = useState(false)
+  const [selectedRoomIds, setSelectedRoomIds] = useState(new Set())
+  const [deletingRooms, setDeletingRooms]     = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -604,8 +856,29 @@ function SallesTab() {
     if (!window.confirm(`Supprimer la salle "${room.name}" ?`)) return
     try {
       await apiRequest(`/rooms/${room.id}`, { method: 'DELETE' })
+      setSelectedRoomIds(prev => { const n = new Set(prev); n.delete(room.id); return n })
       await load()
     } catch (e) { alert(e.message || 'Erreur') }
+  }
+
+  function toggleRoomSelection(id) {
+    setSelectedRoomIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  async function handleBulkDeleteRooms() {
+    const n = selectedRoomIds.size
+    if (!window.confirm(`Supprimer ${n} salle(s) ? Cette action est irréversible.`)) return
+    setDeletingRooms(true)
+    try {
+      await Promise.all([...selectedRoomIds].map(id => apiRequest(`/rooms/${id}`, { method: 'DELETE' })))
+      setSelectedRoomIds(new Set())
+      await load()
+    } catch (e) { alert(e.message || 'Erreur lors de la suppression') }
+    finally { setDeletingRooms(false) }
   }
 
   return (
@@ -642,17 +915,36 @@ function SallesTab() {
         </div>
       )}
 
+      {selectedRoomIds.size > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', background: '#fef9c3', border: '0.5px solid #fde047', borderRadius: '6px', marginBottom: '12px' }}>
+          <span style={{ fontSize: '13px', color: '#713f12', fontWeight: 500 }}>{selectedRoomIds.size} salle(s) sélectionnée(s)</span>
+          <button onClick={handleBulkDeleteRooms} disabled={deletingRooms}
+            style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 12px', fontSize: '12px', fontWeight: 500, cursor: deletingRooms ? 'not-allowed' : 'pointer', opacity: deletingRooms ? 0.7 : 1, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            <Trash2 size={13} />{deletingRooms ? 'Suppression…' : 'Supprimer la sélection'}
+          </button>
+          <button onClick={() => setSelectedRoomIds(new Set())}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px', color: '#92400e' }}>
+            Désélectionner tout
+          </button>
+        </div>
+      )}
+
       {loading ? <CenteredSpinner /> : rooms.length === 0 ? (
         <p style={{ color: '#94a3b8', fontSize: '13px' }}>Aucune salle. Cliquez sur "Ajouter une salle".</p>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
           {rooms.map(room => (
-            <div key={room.id} style={{ background: '#fff', border: '0.5px solid #e2e8f0', borderRadius: '10px', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div key={room.id}
+              onClick={() => toggleRoomSelection(room.id)}
+              style={{ background: selectedRoomIds.has(room.id) ? '#eff6ff' : '#fff', border: selectedRoomIds.has(room.id) ? '0.5px solid #93c5fd' : '0.5px solid #e2e8f0', borderRadius: '10px', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', transition: 'background 0.1s, border-color 0.1s' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <input type="checkbox" checked={selectedRoomIds.has(room.id)}
+                  onChange={() => toggleRoomSelection(room.id)}
+                  onClick={e => e.stopPropagation()} style={{ cursor: 'pointer' }} />
                 <DoorOpen size={20} style={{ color: '#94a3b8' }} />
                 <span style={{ fontWeight: 600, fontSize: '14px', color: '#0f172a' }}>{room.name}</span>
               </div>
-              <div style={{ display: 'flex', gap: '4px' }}>
+              <div style={{ display: 'flex', gap: '4px' }} onClick={e => e.stopPropagation()}>
                 <button style={btnIcon} onClick={() => openEdit(room)} title="Modifier">
                   <Pencil size={14} />
                 </button>
@@ -893,13 +1185,19 @@ function ProjetsTab() {
           </div>
         )}
 
-        <div style={{ marginTop: '12px' }}>
+        <div style={{ marginTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
           <button
             style={{ ...btnPrimary, opacity: (!selectedFile || uploading) ? 0.6 : 1 }}
             onClick={handleImport}
             disabled={uploading || !selectedFile}
           >
             {uploading ? <><Spinner /> Import en cours…</> : 'Importer'}
+          </button>
+          <button style={btnGhost} onClick={() => downloadCsv('projects_template.csv', [
+            'student_name,student_email,filiere,project_title,domain,supervisor_name,enterprise,enterprise_supervisor',
+            'Marie Curie,marie.curie@gmail.com,GL,Système de planification,Génie Logiciel,Prof. Martin,LabCo,Jean Martin',
+          ])}>
+            <Download size={14} /> Modèle CSV
           </button>
         </div>
       </div>
@@ -1016,7 +1314,12 @@ function ProjetsTab() {
                       title={p.title}>{p.title}</td>
                     <td style={{ ...tdStyle, color: '#64748b' }}>{studentMap[p.student_id] ?? `#${p.student_id}`}</td>
                     <td style={{ ...tdStyle, color: '#64748b' }}>{professorMap[p.supervisor_id] ?? `#${p.supervisor_id}`}</td>
-                    <td style={{ ...tdStyle, color: '#64748b' }}>{domainMap[p.domain_id] ?? `#${p.domain_id}`}</td>
+                    <td style={{ ...tdStyle, color: '#64748b' }}>
+                      {(p.domain_ids || []).length === 0
+                        ? '—'
+                        : (p.domain_ids || []).map(id => domainMap[id] ?? `#${id}`).join(', ')
+                      }
+                    </td>
                     <td style={{ ...tdStyle, color: '#64748b' }}>{sessionMap[p.session_id] ?? '—'}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
                       <button style={{ ...btnIcon, color: '#ef4444' }} onClick={() => handleDelete(p)} title="Supprimer">
@@ -1048,6 +1351,9 @@ function IndisponibilitesTab() {
   const [form, setForm]                         = useState(UNAVAIL_EMPTY)
   const [formError, setFormError]               = useState('')
   const [saving, setSaving]                     = useState(false)
+  const [selectedUnavailIds, setSelectedUnavailIds] = useState(new Set())
+  const [deletingUnavails, setDeletingUnavails]     = useState(false)
+  const unavailHeaderRef = useRef(null)
 
   useEffect(() => { load() }, [])
 
@@ -1096,10 +1402,40 @@ function IndisponibilitesTab() {
     if (!window.confirm('Supprimer cette indisponibilité ?')) return
     try {
       await apiRequest(`/unavailabilities/${item.id}`, { method: 'DELETE' })
+      setSelectedUnavailIds(prev => { const n = new Set(prev); n.delete(item.id); return n })
       await load()
     } catch (e) {
       setError(e.message || 'Erreur lors de la suppression')
     }
+  }
+
+  function toggleUnavailSelection(id) {
+    setSelectedUnavailIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  function handleUnavailHeaderCheckbox() {
+    const allSel = sorted.every(u => selectedUnavailIds.has(u.id))
+    if (allSel) {
+      setSelectedUnavailIds(prev => { const n = new Set(prev); sorted.forEach(u => n.delete(u.id)); return n })
+    } else {
+      setSelectedUnavailIds(prev => new Set([...prev, ...sorted.map(u => u.id)]))
+    }
+  }
+
+  async function handleBulkDeleteUnavails() {
+    const n = selectedUnavailIds.size
+    if (!window.confirm(`Supprimer ${n} indisponibilité(s) ?`)) return
+    setDeletingUnavails(true)
+    try {
+      await Promise.all([...selectedUnavailIds].map(id => apiRequest(`/unavailabilities/${id}`, { method: 'DELETE' })))
+      setSelectedUnavailIds(new Set())
+      await load()
+    } catch (e) { setError(e.message || 'Erreur') }
+    finally { setDeletingUnavails(false) }
   }
 
   const profMap = new Map(professors.map(p => [p.id, p.name]))
@@ -1108,6 +1444,13 @@ function IndisponibilitesTab() {
     const nb = profMap.get(b.professor_id) ?? ''
     return na.localeCompare(nb) || a.date.localeCompare(b.date)
   })
+  const allUnavailSelected  = sorted.length > 0 && sorted.every(u => selectedUnavailIds.has(u.id))
+  const someUnavailSelected = sorted.some(u => selectedUnavailIds.has(u.id))
+
+  useEffect(() => {
+    if (!unavailHeaderRef.current) return
+    unavailHeaderRef.current.indeterminate = someUnavailSelected && !allUnavailSelected
+  }, [selectedUnavailIds, sorted.length])
 
   return (
     <div>
@@ -1169,11 +1512,29 @@ function IndisponibilitesTab() {
 
       <InlineError msg={error} />
 
+      {selectedUnavailIds.size > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', background: '#fef9c3', border: '0.5px solid #fde047', borderRadius: '6px', marginBottom: '12px' }}>
+          <span style={{ fontSize: '13px', color: '#713f12', fontWeight: 500 }}>{selectedUnavailIds.size} indisponibilité(s) sélectionnée(s)</span>
+          <button onClick={handleBulkDeleteUnavails} disabled={deletingUnavails}
+            style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 12px', fontSize: '12px', fontWeight: 500, cursor: deletingUnavails ? 'not-allowed' : 'pointer', opacity: deletingUnavails ? 0.7 : 1, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            <Trash2 size={13} />{deletingUnavails ? 'Suppression…' : 'Supprimer la sélection'}
+          </button>
+          <button onClick={() => setSelectedUnavailIds(new Set())}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px', color: '#92400e' }}>
+            Désélectionner tout
+          </button>
+        </div>
+      )}
+
       {loading ? <CenteredSpinner /> : (
         <div style={{ background: '#fff', border: '0.5px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
           <table style={tableStyle}>
             <thead>
               <tr>
+                <th style={{ ...thStyle, width: '36px', textAlign: 'center' }}>
+                  <input type="checkbox" ref={unavailHeaderRef} checked={allUnavailSelected}
+                    onChange={handleUnavailHeaderCheckbox} style={{ cursor: 'pointer' }} />
+                </th>
                 <th style={thStyle}>Professeur</th>
                 <th style={thStyle}>Date</th>
                 <th style={thStyle}>Période</th>
@@ -1182,15 +1543,21 @@ function IndisponibilitesTab() {
             </thead>
             <tbody>
               {sorted.length === 0 ? (
-                <tr><td colSpan={4} style={{ ...tdStyle, textAlign: 'center', color: '#94a3b8' }}>Aucune indisponibilité</td></tr>
+                <tr><td colSpan={5} style={{ ...tdStyle, textAlign: 'center', color: '#94a3b8' }}>Aucune indisponibilité</td></tr>
               ) : sorted.map(item => (
                 <tr key={item.id}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#f8fafc' }}
-                  onMouseLeave={e => { e.currentTarget.style.background = '' }}>
+                  onClick={() => toggleUnavailSelection(item.id)}
+                  style={{ cursor: 'pointer', background: selectedUnavailIds.has(item.id) ? '#eff6ff' : undefined, transition: 'background 0.1s' }}
+                  onMouseEnter={e => { if (!selectedUnavailIds.has(item.id)) e.currentTarget.style.background = '#f8fafc' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = selectedUnavailIds.has(item.id) ? '#eff6ff' : '' }}>
+                  <td style={{ ...tdStyle, width: '36px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                    <input type="checkbox" checked={selectedUnavailIds.has(item.id)}
+                      onChange={() => toggleUnavailSelection(item.id)} style={{ cursor: 'pointer' }} />
+                  </td>
                   <td style={{ ...tdStyle, fontWeight: 500 }}>{profMap.get(item.professor_id) ?? `#${item.professor_id}`}</td>
                   <td style={tdStyle}>{item.date}</td>
                   <td style={tdStyle}>{PERIOD_LABELS[item.period] ?? item.period}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>
+                  <td style={{ ...tdStyle, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
                     <button style={{ ...btnIcon, color: '#ef4444' }} onClick={() => handleDelete(item)} title="Supprimer">
                       <Trash2 size={14} />
                     </button>
@@ -1218,6 +1585,9 @@ function ConflitsTab() {
   const [form, setForm]             = useState(CONFLICT_EMPTY)
   const [formError, setFormError]   = useState('')
   const [saving, setSaving]         = useState(false)
+  const [selectedConflictIds, setSelectedConflictIds] = useState(new Set())
+  const [deletingConflicts, setDeletingConflicts]     = useState(false)
+  const conflictHeaderRef = useRef(null)
 
   useEffect(() => { load() }, [])
 
@@ -1270,11 +1640,49 @@ function ConflitsTab() {
     if (!window.confirm('Supprimer ce conflit ?')) return
     try {
       await apiRequest(`/conflicts/${item.id}`, { method: 'DELETE' })
+      setSelectedConflictIds(prev => { const n = new Set(prev); n.delete(item.id); return n })
       await load()
     } catch (e) {
       setError(e.message || 'Erreur lors de la suppression')
     }
   }
+
+  function toggleConflictSelection(id) {
+    setSelectedConflictIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  function handleConflictHeaderCheckbox() {
+    const allSel = conflicts.every(c => selectedConflictIds.has(c.id))
+    if (allSel) {
+      setSelectedConflictIds(prev => { const n = new Set(prev); conflicts.forEach(c => n.delete(c.id)); return n })
+    } else {
+      setSelectedConflictIds(prev => new Set([...prev, ...conflicts.map(c => c.id)]))
+    }
+  }
+
+  async function handleBulkDeleteConflicts() {
+    const n = selectedConflictIds.size
+    if (!window.confirm(`Supprimer ${n} conflit(s) ?`)) return
+    setDeletingConflicts(true)
+    try {
+      await Promise.all([...selectedConflictIds].map(id => apiRequest(`/conflicts/${id}`, { method: 'DELETE' })))
+      setSelectedConflictIds(new Set())
+      await load()
+    } catch (e) { setError(e.message || 'Erreur') }
+    finally { setDeletingConflicts(false) }
+  }
+
+  const allConflictsSelected  = conflicts.length > 0 && conflicts.every(c => selectedConflictIds.has(c.id))
+  const someConflictsSelected = conflicts.some(c => selectedConflictIds.has(c.id))
+
+  useEffect(() => {
+    if (!conflictHeaderRef.current) return
+    conflictHeaderRef.current.indeterminate = someConflictsSelected && !allConflictsSelected
+  }, [selectedConflictIds, conflicts.length])
 
   return (
     <div>
@@ -1326,11 +1734,29 @@ function ConflitsTab() {
 
       <InlineError msg={error} />
 
+      {selectedConflictIds.size > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', background: '#fef9c3', border: '0.5px solid #fde047', borderRadius: '6px', marginBottom: '12px' }}>
+          <span style={{ fontSize: '13px', color: '#713f12', fontWeight: 500 }}>{selectedConflictIds.size} conflit(s) sélectionné(s)</span>
+          <button onClick={handleBulkDeleteConflicts} disabled={deletingConflicts}
+            style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', padding: '5px 12px', fontSize: '12px', fontWeight: 500, cursor: deletingConflicts ? 'not-allowed' : 'pointer', opacity: deletingConflicts ? 0.7 : 1, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            <Trash2 size={13} />{deletingConflicts ? 'Suppression…' : 'Supprimer la sélection'}
+          </button>
+          <button onClick={() => setSelectedConflictIds(new Set())}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px', color: '#92400e' }}>
+            Désélectionner tout
+          </button>
+        </div>
+      )}
+
       {loading ? <CenteredSpinner /> : (
         <div style={{ background: '#fff', border: '0.5px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
           <table style={tableStyle}>
             <thead>
               <tr>
+                <th style={{ ...thStyle, width: '36px', textAlign: 'center' }}>
+                  <input type="checkbox" ref={conflictHeaderRef} checked={allConflictsSelected}
+                    onChange={handleConflictHeaderCheckbox} style={{ cursor: 'pointer' }} />
+                </th>
                 <th style={thStyle}>Professeur A</th>
                 <th style={thStyle}>Professeur B</th>
                 <th style={thStyle} />
@@ -1338,14 +1764,20 @@ function ConflitsTab() {
             </thead>
             <tbody>
               {conflicts.length === 0 ? (
-                <tr><td colSpan={3} style={{ ...tdStyle, textAlign: 'center', color: '#94a3b8' }}>Aucun conflit enregistré</td></tr>
+                <tr><td colSpan={4} style={{ ...tdStyle, textAlign: 'center', color: '#94a3b8' }}>Aucun conflit enregistré</td></tr>
               ) : conflicts.map(item => (
                 <tr key={item.id}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#f8fafc' }}
-                  onMouseLeave={e => { e.currentTarget.style.background = '' }}>
+                  onClick={() => toggleConflictSelection(item.id)}
+                  style={{ cursor: 'pointer', background: selectedConflictIds.has(item.id) ? '#eff6ff' : undefined, transition: 'background 0.1s' }}
+                  onMouseEnter={e => { if (!selectedConflictIds.has(item.id)) e.currentTarget.style.background = '#f8fafc' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = selectedConflictIds.has(item.id) ? '#eff6ff' : '' }}>
+                  <td style={{ ...tdStyle, width: '36px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                    <input type="checkbox" checked={selectedConflictIds.has(item.id)}
+                      onChange={() => toggleConflictSelection(item.id)} style={{ cursor: 'pointer' }} />
+                  </td>
                   <td style={{ ...tdStyle, fontWeight: 500 }}>{item.professor_a_name}</td>
                   <td style={{ ...tdStyle, fontWeight: 500 }}>{item.professor_b_name}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>
+                  <td style={{ ...tdStyle, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
                     <button style={{ ...btnIcon, color: '#ef4444' }} onClick={() => handleDelete(item)} title="Supprimer">
                       <Trash2 size={14} />
                     </button>
