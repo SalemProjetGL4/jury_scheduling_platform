@@ -1,19 +1,18 @@
 import { useEffect, useState } from 'react'
-import { Download, FileSpreadsheet, FileText, FileJson, FileType, Calendar, Table, User, Building, Loader2 } from 'lucide-react'
+import { Download, FileText, FileJson, FileType, Table, Building, Loader2, Archive } from 'lucide-react'
+import { saveAs } from 'file-saver'
 import { apiRequest } from '../services/api'
 import { exportToCSV, exportToJSON, enrichAssignments } from '../utils/exportUtils'
-import { exportBothDocx } from '../utils/docxExport'
+import { exportBothDocx, buildBothDocxBlobs } from '../utils/docxExport'
 import { useWorkflow } from '../context/WorkflowContext'
 
 const FORMATS = [
-  { icon: FileSpreadsheet, label: 'Excel (xlsx)', sub: 'Tableau complet',         color: 'text-green-600 bg-green-50',  iconColor: '#16A34A' },
   { icon: FileText,        label: 'PDF',           sub: 'Planning détaillé',       color: 'text-red-600 bg-red-50',      iconColor: '#DC2626' },
-  { icon: Calendar,        label: 'iCal / ICS',    sub: "Importer dans\nGoogle Agenda", color: 'text-blue-600 bg-blue-50', iconColor: '#2563EB' },
   { icon: Table,           label: 'CSV',           sub: 'Données brutes',          color: 'text-gray-600 bg-gray-100',   iconColor: '#4B5563' },
   { icon: FileJson,        label: 'JSON',          sub: 'Export brut JSON',         color: 'text-teal-600 bg-teal-50',    iconColor: '#0D9488' },
   { icon: FileType,        label: 'Word (docx)',   sub: 'Planning GL + RT',         color: 'text-indigo-600 bg-indigo-50',iconColor: '#4338CA' },
-  { icon: User,            label: 'Par jury (PDF)', sub: 'Planning par jury',      color: 'text-purple-600 bg-purple-50',iconColor: '#7C3AED' },
-  { icon: Building,        label: 'Par salle (PDF)', sub: 'Planning par salle',   color: 'text-amber-600 bg-amber-50',  iconColor: '#D97706' },
+{ icon: Building,        label: 'Par salle (PDF)', sub: 'Planning par salle',   color: 'text-amber-600 bg-amber-50',    iconColor: '#D97706' },
+  { icon: Archive,         label: 'ZIP par prof.',  sub: 'Planning XLSX\npar professeur', color: 'text-emerald-600 bg-emerald-50', iconColor: '#059669' },
 ]
 
 const DEFAULT_SUMMARY = {
@@ -91,6 +90,8 @@ export default function Exports() {
   const [slots, setSlots]               = useState([])
   const [loadingLookup, setLoadingLookup] = useState(true)
   const [loadingDocx, setLoadingDocx]     = useState(false)
+  const [loadingZip,  setLoadingZip]      = useState(false)
+  const [loadingPdf,  setLoadingPdf]      = useState(false)
 
   useEffect(() => {
     let active = true
@@ -138,6 +139,42 @@ export default function Exports() {
     return () => { active = false }
   }, [])
 
+  function sanitizeName(name) {
+    return name
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/\s+/g, '_')
+      .replace(/[^a-zA-Z0-9_-]/g, '')
+  }
+
+  async function handlePdfExport() {
+    if (disabled || loadingLookup || loadingPdf) return
+    setLoadingPdf(true)
+    try {
+      const enriched = enrichAssignments(assignments, { professors, projects, slots, students, domains })
+      const { glBlob, rtBlob } = await buildBothDocxBlobs(enriched)
+      const base = `pfe_session${year}_juriq_solution${solutionNumber}`
+
+      for (const [blob, filiere] of [[glBlob, 'GL'], [rtBlob, 'RT']]) {
+        const form = new FormData()
+        form.append('file', blob, `${base}_${filiere}.docx`)
+
+        const res = await fetch('/api/convert/docx-to-pdf', { method: 'POST', body: form })
+        if (!res.ok) {
+          const msg = await res.text()
+          throw new Error(msg || `Conversion failed (${res.status})`)
+        }
+
+        const pdfBlob = await res.blob()
+        saveAs(pdfBlob, `${base}_${filiere}.pdf`)
+        if (filiere === 'GL') await new Promise(r => setTimeout(r, 500))
+      }
+    } catch (err) {
+      console.error('[PDF export]', err)
+    } finally {
+      setLoadingPdf(false)
+    }
+  }
+
   async function handleWordExport() {
     if (disabled || loadingLookup || loadingDocx) return
     setLoadingDocx(true)
@@ -148,6 +185,47 @@ export default function Exports() {
       console.error('[DOCX export]', err)
     } finally {
       setLoadingDocx(false)
+    }
+  }
+
+  async function downloadProfessorZip() {
+    if (disabled || loadingLookup || loadingZip) return
+    setLoadingZip(true)
+    try {
+      const enriched = enrichAssignments(assignments, { professors, projects, slots, students, domains })
+
+      // Group enriched rows by professor name across all three roles
+      const byProf = new Map()
+      const addRow = (name, row, role) => {
+        if (!name || name === '—') return
+        if (!byProf.has(name)) byProf.set(name, [])
+        byProf.get(name).push({ ...row, role })
+      }
+      enriched.forEach(row => {
+        addRow(row.president_name,  row, 'Président')
+        addRow(row.examiner_name,   row, 'Examinateur')
+        addRow(row.supervisor_name, row, 'Encadrant')
+      })
+
+      const [{ default: JSZip }, { buildProfessorWorkbook }] = await Promise.all([
+        import('jszip'),
+        import('../utils/professorExport'),
+      ])
+
+      const zip = new JSZip()
+      for (const [profName, rows] of byProf) {
+        const wb     = await buildProfessorWorkbook(profName, rows)
+        const buffer = await wb.xlsx.writeBuffer()
+        zip.file(`${sanitizeName(profName)}_planning.xlsx`, buffer)
+      }
+
+      const blob         = await zip.generateAsync({ type: 'blob' })
+      const sessionLabel = selectedSolution?.id ? `session${selectedSolution.id}` : `session_${year}`
+      saveAs(blob, `planning_jury_${sessionLabel}.zip`)
+    } catch (err) {
+      console.error('[ZIP export]', err)
+    } finally {
+      setLoadingZip(false)
     }
   }
 
@@ -193,6 +271,8 @@ export default function Exports() {
             const isCSV  = label === 'CSV'
             const isJSON = label === 'JSON'
             const isWord = label === 'Word (docx)'
+            const isZip  = label === 'ZIP par prof.'
+            const isPdf  = label === 'PDF'
             const lookup = { professors, projects, slots, students, domains, filename }
             const clientExport = isCSV
               ? () => exportToCSV(assignments, lookup)
@@ -200,9 +280,15 @@ export default function Exports() {
               ? () => exportToJSON(assignments, lookup)
               : isWord
               ? handleWordExport
+              : isZip
+              ? downloadProfessorZip
+              : isPdf
+              ? handlePdfExport
               : undefined
             const btnDisabled = (isCSV || isJSON) ? (disabled || loadingLookup)
               : isWord ? (disabled || loadingLookup || loadingDocx)
+              : isZip  ? (disabled || loadingLookup || loadingZip)
+              : isPdf  ? (disabled || loadingLookup || loadingPdf)
               : false
             return (
               <div key={label} className="border border-gray-200 rounded-xl p-4 flex flex-col items-center gap-3 hover:border-blue-300 hover:shadow-sm transition-all">
@@ -216,14 +302,14 @@ export default function Exports() {
                 <button
                   onClick={clientExport}
                   disabled={btnDisabled}
-                  title={btnDisabled ? (loadingDocx && isWord ? 'Génération en cours…' : loadingLookup ? 'Chargement des données…' : 'Aucun planning généré') : ''}
+                  title={btnDisabled ? ((loadingDocx && isWord) || (loadingZip && isZip) || (loadingPdf && isPdf) ? 'Génération en cours…' : loadingLookup ? 'Chargement des données…' : 'Aucun planning généré') : ''}
                   className={`flex items-center gap-1.5 w-full justify-center text-xs font-medium text-blue-600 border border-blue-200 rounded-lg py-2 hover:bg-blue-50 transition-colors${btnDisabled ? ' opacity-40 cursor-not-allowed' : ''}`}
                 >
-                  {isWord && loadingDocx
+                  {(isWord && loadingDocx) || (isZip && loadingZip) || (isPdf && loadingPdf)
                     ? <Loader2 size={13} className="animate-spin" />
                     : <Download size={13} />
                   }
-                  {isWord && loadingDocx ? 'Génération…' : 'Télécharger'}
+                  {(isWord && loadingDocx) || (isZip && loadingZip) || (isPdf && loadingPdf) ? 'Génération…' : 'Télécharger'}
                 </button>
               </div>
             )

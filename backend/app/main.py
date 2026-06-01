@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.db import engine
+from app.routers.convert import router as convert_router
 from app.routers.crud import (
     assignment_router,
     conflict_router,
@@ -55,6 +56,7 @@ def healthcheck():
     return {"status": "ok"}
 
 
+app.include_router(convert_router)
 app.include_router(filiere_router)
 app.include_router(domain_router)
 app.include_router(professor_router)

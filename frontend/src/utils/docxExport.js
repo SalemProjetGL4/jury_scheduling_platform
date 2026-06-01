@@ -245,3 +245,13 @@ export async function exportBothDocx(assignments, filename) {
   await new Promise(r => setTimeout(r, 2000))
   saveAs(rtBlob, `${filename}_RT.docx`)
 }
+
+// Returns the two DOCX blobs without downloading — used by the PDF export
+// which POSTs each blob to the backend /convert/docx-to-pdf endpoint.
+export async function buildBothDocxBlobs(assignments) {
+  const [glBlob, rtBlob] = await Promise.all([
+    Packer.toBlob(buildDoc(assignments, 'GL')),
+    Packer.toBlob(buildDoc(assignments, 'RT')),
+  ])
+  return { glBlob, rtBlob }
+}
