@@ -12,7 +12,7 @@ export function enrichAssignments(assignments, { professors = [], projects = [],
     const project    = projectMap.get(a.project_id)
     const student    = project ? studentMap.get(project.student_id) : null
     const supervisor = project ? profMap.get(project.supervisor_id) : null
-    const domain     = project ? domainMap.get(project.domain_id)   : null
+    const domain     = project ? domainMap.get(project.domain_ids?.[0]) : null
 
     // DB assignments: president_id / examiner_id
     // Workflow assignments: roles.president / roles.examiner
@@ -33,12 +33,15 @@ export function enrichAssignments(assignments, { professors = [], projects = [],
       date,
       time,
       room,
-      project_title:   project?.title   ?? '',
-      domain:          domain?.name     ?? '',
-      student_name:    student?.name    ?? '',
-      supervisor_name: supervisor?.name ?? '',
-      president_name:  president?.name  ?? '',
-      examiner_name:   examiner?.name   ?? '',
+      project_title:         project?.title                  ?? '',
+      domain:                domain?.name                    ?? '',
+      student_name:          student?.name                   ?? '',
+      supervisor_name:       supervisor?.name                ?? '',
+      president_name:        president?.name                 ?? '',
+      examiner_name:         examiner?.name                  ?? '',
+      enterprise:            project?.enterprise             ?? '',
+      enterprise_supervisor: project?.enterprise_supervisor  ?? '',
+      filiere_id:            student?.filiere_id             ?? null,
     }
   })
 }
@@ -57,12 +60,13 @@ function deriveTimeFromPeriod(period, slotNumber) {
 
 export function exportToCSV(assignments, { professors, projects, slots, students, domains, filename = 'juriq-schedule' } = {}) {
   const rows   = enrichAssignments(assignments, { professors, projects, slots, students, domains })
-  const header = 'date,time,room,project_title,domain,student_name,supervisor_name,president_name,examiner_name'
+  const header = 'date,time,room,project_title,domain,student_name,supervisor_name,president_name,examiner_name,enterprise,enterprise_supervisor'
   const lines  = rows.map(r =>
     [r.date, r.time, r.room,
      csvEscape(r.project_title), csvEscape(r.domain),
      csvEscape(r.student_name),  csvEscape(r.supervisor_name),
-     csvEscape(r.president_name), csvEscape(r.examiner_name)].join(',')
+     csvEscape(r.president_name), csvEscape(r.examiner_name),
+     csvEscape(r.enterprise), csvEscape(r.enterprise_supervisor)].join(',')
   )
   const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv' })
   triggerDownload(blob, `${filename}.csv`)
