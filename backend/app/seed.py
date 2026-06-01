@@ -86,6 +86,7 @@ def clear_all(db: Session) -> None:
     db.execute(delete(ProfessorDomain))
     db.execute(delete(DepartmentDomain))
     db.execute(delete(Slot))
+    db.execute(delete(Room))
     db.execute(delete(Project))
     db.execute(delete(ConstraintRule))
     db.execute(delete(JurySession))
@@ -595,12 +596,14 @@ def seed(db: Session) -> None:
         domain_ids=[domain_ai.id],
         supervisor_id=prof_a.id,
         student_id=student_a.id,
+        session_id=session_1.id,
     )
     project_b = Project(
         title="Learning Analytics Dashboard",
         domain_ids=[domain_ds.id],
         supervisor_id=prof_b.id,
         student_id=student_b.id,
+        session_id=session_2.id,
     )
     db.add_all([project_a, project_b])
     db.flush()

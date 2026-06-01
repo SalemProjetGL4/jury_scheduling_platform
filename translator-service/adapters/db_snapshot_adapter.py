@@ -33,7 +33,7 @@ def _decimal_to_float(value: Any) -> Any:
     return value
 
 
-def build_db_snapshot() -> dict[str, Any]:
+def build_db_snapshot(session_id: int | None = None) -> dict[str, Any]:
     engine = create_engine(settings.database_url, future=True)
 
     with engine.connect() as conn:
@@ -65,36 +65,45 @@ def build_db_snapshot() -> dict[str, Any]:
             )
         ).mappings().all()
 
-        project_rows = conn.execute(
-            text(
-                """
-                SELECT pr.id, pr.title,
-                       pr.domain_ids[1] AS domain_id,
-                       d.name AS domain_name,
-                       pr.supervisor_id, pr.student_id, st.name AS student_name,
-                       st.filiere_id AS student_filiere_id,
-                       f.department_id AS filiere_department_id,
-                       pr.domain_ids,
-                       CASE WHEN d.name IS NOT NULL THEN ARRAY[d.name]::text[] ELSE ARRAY[]::text[] END AS domain_names
-                FROM project pr
-                LEFT JOIN domain d ON d.id = pr.domain_ids[1]
-                LEFT JOIN student st ON st.id = pr.student_id
-                LEFT JOIN filiere f ON f.id = st.filiere_id
-                ORDER BY pr.id
-                """
-            )
-        ).mappings().all()
+        if session_id is not None:
+            project_rows = conn.execute(
+                text(
+                    """
+                    SELECT pr.id, pr.title,
+                        pr.domain_ids[1] AS domain_id,
+                        d.name AS domain_name,
+                        pr.supervisor_id, pr.student_id, st.name AS student_name,
+                        st.filiere_id AS student_filiere_id,
+                        f.department_id AS filiere_department_id,
+                        pr.domain_ids,
+                        CASE WHEN d.name IS NOT NULL THEN ARRAY[d.name]::text[] ELSE ARRAY[]::text[] END AS domain_names
+                    FROM project pr
+                    LEFT JOIN domain d ON d.id = pr.domain_ids[1]
+                    LEFT JOIN student st ON st.id = pr.student_id
+                    LEFT JOIN filiere f ON f.id = st.filiere_id
+                    ORDER BY pr.id
+                    """
+                ),
+                {"session_id": session_id},
+            ).mappings().all()
+        else:
+                        raise ValueError("session_id is required for snapshot building")
 
-        slot_rows = conn.execute(
-            text(
-                """
-                SELECT s.id, s.session_id, s.start_time, s.end_time, s.slot_number, r.name AS room
-                FROM slot s
-                JOIN room r ON r.id = s.room_id
-                ORDER BY s.id
-                """
-            )
-        ).mappings().all()
+        if session_id is not None:
+            slot_rows = conn.execute(
+                text(
+                    """
+                    SELECT s.id, s.session_id, s.start_time, s.end_time, s.slot_number, r.name AS room
+                    FROM slot s
+                    JOIN room r ON r.id = s.room_id
+                    WHERE s.session_id = :session_id
+                    ORDER BY s.id
+                    """
+                ),
+                {"session_id": session_id},
+            ).mappings().all()
+        else:
+            raise ValueError("session_id is required for snapshot building")
 
         unavailability_rows = conn.execute(
             text(

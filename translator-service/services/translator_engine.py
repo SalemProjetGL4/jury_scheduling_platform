@@ -18,11 +18,11 @@ except Exception:
     logger = logging.getLogger("translator")
 
 
-def translate_prompt(*, request_id: str, prompt: str, user_id: str | None) -> dict[str, Any]:
-    logger.info("TRANSLATE REQUEST — request_id=%s user_id=%s", request_id, user_id)
+def translate_prompt(*, request_id: str, prompt: str, user_id: str | None, session_id: int | None = None) -> dict[str, Any]:
+    logger.info("TRANSLATE REQUEST — request_id=%s user_id=%s session_id=%s", request_id, user_id, session_id)
     logger.debug("USER PROMPT — %r", prompt[:200])
 
-    snapshot = build_db_snapshot()
+    snapshot = build_db_snapshot(session_id=session_id)
     stats = snapshot_stats(snapshot)
     logger.info(
         "DB SNAPSHOT — professors=%d projects=%d slots=%d constraint_rules=%d (hard=%d soft=%d)",

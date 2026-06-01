@@ -215,6 +215,11 @@ def _run_workflow(request_id: str) -> None:
 
 @router.post("/schedule", response_model=ScheduleAcceptedResponse, status_code=status.HTTP_202_ACCEPTED)
 def schedule_workflow(payload: ScheduleRequest, background_tasks: BackgroundTasks):
+    if payload.session_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="session_id is required to schedule (missing or null)",
+        )
     request_id = str(uuid4())
     state: SchedulingState = init_state(
         request_id=request_id,
@@ -222,6 +227,7 @@ def schedule_workflow(payload: ScheduleRequest, background_tasks: BackgroundTask
         user_id=payload.user_id,
         old_solver_result=payload.old_solver_result,
         requested_route=payload.requested_route,
+        session_id=payload.session_id,
     )
     store.put(state)
     background_tasks.add_task(_run_workflow, request_id)

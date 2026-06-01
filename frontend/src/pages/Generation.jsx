@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CheckCircle2, Circle, Loader2, XCircle } from 'lucide-react'
 import { scheduleWorkflow, pollUntilDone, enrichSolverResult } from '../services/orchestratorApi'
+import { apiRequest } from '../services/api'
 import { useWorkflow } from '../context/WorkflowContext'
 
 const WIZARD_STEPS = [
@@ -104,7 +105,7 @@ function computePipelineMeta(nodeHistory, currentNode) {
 
 export default function Generation() {
   const navigate = useNavigate()
-  const { result: workflowResult, saveResult, clearResult, saveStatus, clearStatus } = useWorkflow()
+  const { result: workflowResult, saveResult, clearResult, saveStatus, clearStatus, saveSessionId } = useWorkflow()
 
   const [prompt, setPrompt] = useState('')
   const [phase, setPhase] = useState('idle') // idle | running | done | error
@@ -115,12 +116,36 @@ export default function Generation() {
     workflowResult?.solver_result?.solutions?.length || workflowResult?.solver_result?.assignments?.length,
   )
   const [mode, setMode] = useState(hasSolution ? 'edit' : 'new')
+  const [sessions, setSessions] = useState([])
+  const [selectedSessionId, setSelectedSessionId] = useState('')
+  const [loadingSessions, setLoadingSessions] = useState(false)
 
   useEffect(() => {
     if (!hasSolution && mode === 'edit') setMode('new')
   }, [hasSolution, mode])
 
+  useEffect(() => {
+    async function fetchSessions() {
+      setLoadingSessions(true)
+      try {
+        const data = await apiRequest('/sessions?limit=200')
+        if (Array.isArray(data) && data.length > 0) {
+          const sorted = [...data].sort((a, b) => new Date(b.start_date) - new Date(a.start_date))
+          setSessions(sorted)
+          setSelectedSessionId(String(sorted[0].id))
+        } else {
+          setSessions([])
+        }
+      } catch { setSessions([]) } finally { setLoadingSessions(false) }
+    }
+    fetchSessions()
+  }, [])
+
   async function handleLaunch() {
+    if (!selectedSessionId) {
+      setError("Veuillez sélectionner une session avant de lancer la génération.")
+      return
+    }
     if (!prompt.trim()) return
     setError('')
     setPhase('running')
@@ -129,6 +154,7 @@ export default function Generation() {
     const oldSolverResult = hasSolution && mode === 'edit'
       ? workflowResult?.solver_result
       : null
+    saveSessionId(selectedSessionId)
     clearResult()   // wipe the previous result so Results page never shows stale data
     clearStatus()
 
@@ -141,6 +167,7 @@ export default function Generation() {
         null,
         oldSolverResult,
         requestedRoute,
+        Number(selectedSessionId),
       )
 
       const result = await pollUntilDone(
@@ -246,6 +273,33 @@ export default function Generation() {
             </button>
           </div>
         )}
+
+        {/* Session selector */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Session à planifier</label>
+          {loadingSessions ? (
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <Loader2 size={14} className="animate-spin" /> Chargement…
+            </div>
+          ) : sessions.length === 0 ? (
+            <p className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              Aucune session disponible. Créez d'abord une session dans l'onglet Données.
+            </p>
+          ) : (
+            <select
+              value={selectedSessionId}
+              onChange={e => setSelectedSessionId(e.target.value)}
+              disabled={phase === 'running' || phase === 'done'}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60 disabled:bg-gray-50"
+            >
+              {sessions.map(s => (
+                <option key={s.id} value={String(s.id)}>
+                  Session {s.id} — {s.start_date} → {s.end_date} ({s.status})
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
 
         <textarea
           rows={5}
@@ -383,7 +437,7 @@ export default function Generation() {
           ) : (
             <button
               onClick={handleLaunch}
-              disabled={!prompt.trim() || phase === 'running'}
+              disabled={!prompt.trim() || phase === 'running' || sessions.length === 0 || !selectedSessionId}
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold px-6 py-2 rounded-lg transition-colors"
             >
               {phase === 'running' && <Loader2 size={15} className="animate-spin" />}

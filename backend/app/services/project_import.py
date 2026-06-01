@@ -59,8 +59,18 @@ _REQUIRED_KEYS = {
     "student_email",
     "filiere",
     "project_title",
-    "domain",
     "supervisor_name",
+}
+
+FILIERE_ALIASES: dict[str, str] = {
+    "gl": "GL5",
+    "gl5": "GL5",
+    "rt": "RT5",
+    "rt5": "RT5",
+    "génie logiciel": "GL5",
+    "genie logiciel": "GL5",
+    "réseaux et télécommunications": "RT5",
+    "reseaux et telecommunications": "RT5",
 }
 
 
@@ -72,6 +82,17 @@ def normalize_prof_name(name: str) -> str:
     name = re.sub(r"[^a-z0-9]+", " ", name)
     name = " ".join(name.split())
     return name
+
+
+def _find_prof_id(supervisor_raw: str, professors_by_name: dict[str, int]) -> int | None:
+    """Exact normalized match first, then substring partial match."""
+    key = normalize_prof_name(supervisor_raw)
+    if key in professors_by_name:
+        return professors_by_name[key]
+    for prof_name, prof_id in professors_by_name.items():
+        if key in prof_name or prof_name in key:
+            return prof_id
+    return None
 
 
 def _normalize(value: str) -> str:
@@ -230,10 +251,6 @@ def import_projects(
         }
 
     # Pre-load lookup tables
-    domains_by_name: dict[str, int] = {
-        d.name.strip().lower(): d.id
-        for d in db.execute(select(models.Domain)).scalars().all()
-    }
     filieres_by_name: dict[str, int] = {
         f.name.strip().lower(): f.id
         for f in db.execute(select(models.Filiere)).scalars().all()
@@ -247,6 +264,11 @@ def import_projects(
         for e in db.execute(select(models.Student.email)).scalars().all()
     }
 
+    _fallback_domain = db.execute(
+        select(models.Domain).where(models.Domain.name == "Software Engineering")
+    ).scalar_one_or_none()
+    fallback_domain_ids: list[int] = [_fallback_domain.id] if _fallback_domain else []
+
     issues: list[str] = []
     created = 0
     skipped = 0
@@ -256,7 +278,6 @@ def import_projects(
         student_email = _clean(row.get("student_email"))
         filiere_raw = _clean(row.get("filiere"))
         project_title = _clean(row.get("project_title"))
-        domain_raw = _clean(row.get("domain"))
         supervisor_raw = _clean(row.get("supervisor_name"))
         enterprise = _clean(row.get("enterprise"))
         enterprise_supervisor = _clean(row.get("enterprise_supervisor"))
@@ -266,29 +287,19 @@ def import_projects(
             issues.append(f"row {row_num}: Missing supervisor name — row skipped")
             skipped += 1
             continue
-        supervisor_id = professors_by_name.get(normalize_prof_name(supervisor_raw))
+        supervisor_id = _find_prof_id(supervisor_raw, professors_by_name)
         if supervisor_id is None:
             issues.append(f"row {row_num}: Supervisor '{supervisor_raw}' not found in database — row skipped")
             skipped += 1
             continue
 
-        # Step 2 — Resolve domain
-        if not domain_raw:
-            issues.append(f"row {row_num}: Missing domain — row skipped")
-            skipped += 1
-            continue
-        domain_id = domains_by_name.get(domain_raw.lower())
-        if domain_id is None:
-            issues.append(f"row {row_num}: Domain '{domain_raw}' not found — row skipped")
-            skipped += 1
-            continue
-
-        # Step 3 — Resolve filiere
+        # Step 2 — Resolve filiere
         if not filiere_raw:
             issues.append(f"row {row_num}: Missing filière — row skipped")
             skipped += 1
             continue
-        filiere_id = filieres_by_name.get(filiere_raw.lower())
+        filiere_mapped = FILIERE_ALIASES.get(filiere_raw.lower(), filiere_raw)
+        filiere_id = filieres_by_name.get(filiere_mapped.lower())
         if filiere_id is None:
             issues.append(f"row {row_num}: Filière '{filiere_raw}' not found — row skipped")
             skipped += 1
@@ -307,6 +318,9 @@ def import_projects(
             issues.append(f"row {row_num}: Missing project title — row skipped")
             skipped += 1
             continue
+
+        # Step 3 — Infer domains from title keywords; fall back to Software Engineering
+        domain_ids = infer_domain_ids(project_title, db) or fallback_domain_ids
 
         # Step 4 — Upsert student
         if student_email.lower() in existing_emails:
@@ -334,7 +348,7 @@ def import_projects(
         # Step 5 — Create project
         db.add(models.Project(
             title=project_title,
-            domain_id=domain_id,
+            domain_ids=domain_ids,
             supervisor_id=supervisor_id,
             student_id=student.id,
             session_id=session_id,

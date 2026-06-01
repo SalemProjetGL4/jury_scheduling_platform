@@ -36,19 +36,29 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
         }
 
     options = data.get("solver_options", {})
-    # Return a small pool of feasible schedules by default so the reflector can
-    # rank compromised solutions instead of seeing only the first one.
-    max_solutions = _as_positive_int(options.get("max_solutions"), default=3)
+    # Default to 1 solution: the frontend shows only one, and each extra solution
+    # costs up to max_time_in_seconds — 3 solutions at 240s each = 720s which
+    # exceeds the 600s gateway timeout. Callers may override via solver_options.
+    max_solutions = _as_positive_int(options.get("max_solutions"), default=1)
     include_soft_diagnostics = bool(options.get("include_soft_diagnostics", True))
 
-    # Auto-disable conflict refiner for large problems: it adds one BoolVar assumption
-    # per constraint (~150K vars for 236 projects × 194 slots), doubling model size and
-    # making constraint building 2-3× slower.
+    # Auto-detect large models by total variable count (professors × projects × 2 roles × slots).
+    # The old n_proj * n_slots threshold missed medium problems (33 × 48 = 1584 < 10K)
+    # that are actually expensive because they have 28 × 33 × 2 × 48 = 88K variables.
     n_proj = len(data.get("projects", []))
     n_slots = len(data.get("sessions", []))
-    auto_large = n_proj * n_slots > 10_000
+    n_professors = len(data.get("professors", []))
+    total_vars = n_professors * n_proj * 2 * n_slots
+    auto_large = total_vars > 50_000
+    _log.info(
+        "SOLVE config — n_proj=%d n_slots=%d n_profs=%d total_vars=%d auto_large=%s",
+        n_proj, n_slots, n_professors, total_vars, auto_large,
+    )
     include_conflict_refiner = bool(options.get("include_conflict_refiner", not auto_large))
-    _log.info("SOLVE config — max_solutions=%d conflict_refiner=%s (auto_large=%s)", max_solutions, include_conflict_refiner, auto_large)
+    _log.info(
+        "SOLVE config — max_solutions=%d conflict_refiner=%s auto_large=%s",
+        max_solutions, include_conflict_refiner, auto_large,
+    )
 
     t1 = time.monotonic()
     bundle = build_model(data, include_conflict_refiner=include_conflict_refiner)
@@ -56,7 +66,7 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
     _log.info("TIMING model_build: %.2fs", time.monotonic() - t1)
 
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = options.get("max_time_seconds", 240)
+    solver.parameters.max_time_in_seconds = options.get("max_time_seconds", 180)
     solver.parameters.num_search_workers = options.get("num_workers", 4)
     # Use caller-supplied seed for reproducibility, or a time-based seed so
     # repeated runs with the same data explore different parts of the solution space.
