@@ -18,8 +18,8 @@ import { saveAs } from 'file-saver'
 // ── constants ─────────────────────────────────────────────────────────────────
 
 const FILIERE_MAP = {
-  'génie logiciel':                   { code: 'GL', label: 'GENIE LOGICIEL (GL)' },
-  'réseaux et télécommunications':    { code: 'RT', label: 'RESEAUX ET TELECOMMUNICATIONS (RT)' },
+  GL: { filiere_id: 1, label: 'GENIE LOGICIEL (GL)' },
+  RT: { filiere_id: 2, label: 'RESEAUX ET TELECOMMUNICATIONS (RT)' },
 }
 
 const FR_MONTHS = [
@@ -149,12 +149,12 @@ function buildTable(slots) {
 
   // Slot rows (6 per slot)
   const values = (s) => [
-    s.student_name    ?? '',
-    s.project_title   ?? '',
-    '',
-    '',
-    s.supervisor_name ?? '',
-    s.examiner_name   ?? '',
+    s.student_name          ?? '',
+    s.project_title         ?? '',
+    s.enterprise            ?? '',
+    s.enterprise_supervisor ?? '',
+    s.supervisor_name       ?? '',
+    s.examiner_name         ?? '',
   ]
 
   for (const slot of slots) {
@@ -186,13 +186,10 @@ function buildTable(slots) {
 // ── document builder ──────────────────────────────────────────────────────────
 
 function buildDoc(assignments, filiereCode) {
-  const entry = Object.values(FILIERE_MAP).find(e => e.code === filiereCode)
+  const entry    = FILIERE_MAP[filiereCode]
   if (!entry) throw new Error(`Unknown filiere: ${filiereCode}`)
 
-  const domainKey = Object.entries(FILIERE_MAP).find(([, v]) => v.code === filiereCode)?.[0] ?? ''
-  const filtered  = assignments.filter(
-    a => (a.domain ?? '').toLowerCase().trim() === domainKey
-  )
+  const filtered = assignments.filter(a => a.filiere_id === entry.filiere_id)
 
   if (!filtered.length) {
     return new Document({
