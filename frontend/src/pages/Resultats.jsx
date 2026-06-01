@@ -559,10 +559,12 @@ export default function Resultats() {
               const failedConstraints = wfSolverResult?.failed_constraints || []
               const wfErrors = workflowResult?.errors || []
 
-              if (solverStatus === 'INFEASIBLE') return (
+              if (solverStatus === 'INFEASIBLE') {
+                const relaxSuggestions = wfReflectorResult?.relaxation_suggestions || []
+                return (
                 <tr>
                   <td colSpan={7}>
-                    <div className="px-6 py-8 space-y-3">
+                    <div className="px-6 py-8 space-y-4">
                       <div className="flex items-center gap-2 text-red-600">
                         <AlertTriangle size={18} />
                         <p className="text-sm font-semibold">Aucune solution trouvée — contraintes incompatibles</p>
@@ -571,8 +573,9 @@ export default function Resultats() {
                         Le solveur n'a pas pu satisfaire toutes les contraintes obligatoires.
                         Vérifiez les données ou assouplissez les contraintes.
                       </p>
+
                       {failedConstraints.length > 0 && (
-                        <ul className="space-y-1 mt-2">
+                        <ul className="space-y-1">
                           {failedConstraints.slice(0, 6).map((fc, i) => (
                             <li key={i} className="text-xs text-red-700 bg-red-50 border border-red-100 rounded px-3 py-1.5">
                               <span className="font-medium">{fc.constraint || fc.rule || 'Contrainte'}</span>
@@ -584,6 +587,27 @@ export default function Resultats() {
                           )}
                         </ul>
                       )}
+
+                      {relaxSuggestions.length > 0 && (
+                        <div className="border border-amber-200 bg-amber-50 rounded-lg px-4 py-3 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <Lightbulb size={14} className="text-amber-500 flex-shrink-0" />
+                            <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">
+                              Suggestions pour débloquer le solveur
+                            </p>
+                          </div>
+                          <ul className="space-y-2">
+                            {relaxSuggestions.map((s, i) => (
+                              <li key={i} className="rounded-md border border-amber-100 bg-white px-3 py-2">
+                                <p className="text-xs font-semibold text-gray-800">{s.constraint}</p>
+                                <p className="text-xs text-blue-600 mt-0.5">→ {s.action}</p>
+                                {s.reason && <p className="text-xs text-gray-500 mt-0.5">{s.reason}</p>}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
                       <button onClick={() => navigate('/generation')}
                         className="mt-1 text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
                         Modifier les contraintes et relancer
@@ -591,7 +615,7 @@ export default function Resultats() {
                     </div>
                   </td>
                 </tr>
-              )
+              )}
 
               if (finalStatus === 'error' || wfErrors.length > 0) return (
                 <tr>

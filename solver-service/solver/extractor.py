@@ -203,9 +203,9 @@ def evaluate_soft_constraint_violations(
     base_idx = len(list(collect_rule_specs(data, "soft")))
     weights = data.get("constraints", {}).get("weights", {})
 
-    # Workload balance: sum |load * n_prof - total_assignments|
+    # Workload balance: sum of absolute deviations from mean voluntary load.
+    # Only president+examiner are voluntary roles; supervisor is fixed per project.
     n_prof = max(1, len(professors))
-    total_assignments = len(projects) * len(ROLES)
     prof_loads: dict[int, int] = {p["id"]: 0 for p in professors}
     for assignment in assignments:
         for role_key in ("president", "examiner"):
@@ -213,10 +213,9 @@ def evaluate_soft_constraint_violations(
             if pid is not None and pid in prof_loads:
                 prof_loads[pid] += 1
 
-    workload_violation = 0
-    for pid, load in prof_loads.items():
-        lhs = load * n_prof - total_assignments
-        workload_violation += abs(int(lhs))
+    voluntary_total = sum(prof_loads.values())
+    avg_load = voluntary_total / n_prof
+    workload_violation = int(round(sum(abs(load - avg_load) for load in prof_loads.values())))
 
     workload_w = normalize_weight(weights.get("workload", 10), default=10)
     if workload_violation > 0:

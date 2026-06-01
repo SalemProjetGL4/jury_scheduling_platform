@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from typing import Any, Iterable, List
 
@@ -84,9 +85,12 @@ class ReflectorEvaluator:
             # fallback to raw_total if no violations
             total_penalty = weighted_total if weighted_total > 0 else raw_total
 
-            # rating formula: base 100, penalize count and weighted penalty
-            rating = 100 - (violations_count * 15) - int(round(total_penalty * 2))
-            rating = max(0, min(100, rating))
+            # rating formula: base 100, penalize count and weighted penalty.
+            # Use log scale for the penalty so the score stays meaningful for
+            # large problem sizes where raw penalties can be in the thousands.
+            penalty_score = min(70, int(round(math.log1p(total_penalty) * 5)))
+            violation_score = min(30, violations_count * 5)
+            rating = max(0, min(100, 100 - violation_score - penalty_score))
 
             explanation = self._build_explanation(violations)
 

@@ -132,18 +132,21 @@ export default function Generation() {
         if (Array.isArray(data) && data.length > 0) {
           const sorted = [...data].sort((a, b) => new Date(b.start_date) - new Date(a.start_date))
           setSessions(sorted)
-          setSelectedSessionId(String(sorted[0].id))
+          const firstId = sorted[0]?.id
+          setSelectedSessionId(firstId != null ? String(firstId) : '')
         } else {
           setSessions([])
+          setSelectedSessionId('')
         }
-      } catch { setSessions([]) } finally { setLoadingSessions(false) }
+      } catch { setSessions([]); setSelectedSessionId('') } finally { setLoadingSessions(false) }
     }
     fetchSessions()
   }, [])
 
   async function handleLaunch() {
-    if (!selectedSessionId) {
-      setError("Veuillez sélectionner une session avant de lancer la génération.")
+    const sessionId = parseInt(selectedSessionId, 10)
+    if (!selectedSessionId || isNaN(sessionId) || sessionId <= 0) {
+      setError("Veuillez sélectionner une session valide avant de lancer la génération.")
       return
     }
     if (!prompt.trim()) return
@@ -167,7 +170,7 @@ export default function Generation() {
         null,
         oldSolverResult,
         requestedRoute,
-        Number(selectedSessionId),
+        sessionId,
       )
 
       const result = await pollUntilDone(
@@ -437,7 +440,7 @@ export default function Generation() {
           ) : (
             <button
               onClick={handleLaunch}
-              disabled={!prompt.trim() || phase === 'running' || sessions.length === 0 || !selectedSessionId}
+              disabled={!prompt.trim() || phase === 'running' || sessions.length === 0 || !selectedSessionId || isNaN(parseInt(selectedSessionId, 10))}
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold px-6 py-2 rounded-lg transition-colors"
             >
               {phase === 'running' && <Loader2 size={15} className="animate-spin" />}

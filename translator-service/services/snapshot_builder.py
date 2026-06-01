@@ -59,6 +59,7 @@ def build_solver_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
             "slot_number": s.get("slot_number"),
             "start_time": s.get("start_time"),
             "end_time": s.get("end_time"),
+            "room": s.get("room"),
         }
         for s in snapshot.get("sessions", [])
     ]

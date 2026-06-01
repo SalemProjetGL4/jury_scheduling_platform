@@ -39,6 +39,7 @@ def reflect_solver_output(request: ReflectRequest) -> dict[str, Any]:
         parsed = _apply_llm_reflection(payload)
         if parsed is not None:
             result = parsed.model_dump(mode="json")
+            _override_ratings_with_evaluator(result, request.solver_result or {})
             _write_scores_to_redis(request, result)
             return result
     except Exception as exc:
@@ -127,6 +128,29 @@ def build_reflector_context(payload: dict[str, Any]) -> dict[str, Any]:
 
     # Detect which constraint types are failing
     failed_types = {fc["constraint"] for fc in failed_constraints}
+
+    # --- CASE 0: Timeout — surface capacity metrics for the LLM ---
+    if "cp_sat_timeout" in failed_types:
+        n_proj = len(projects)
+        n_prof = max(1, len(professors))
+        total_cap = sum(p.get("max_juries", 2) for p in professors.values())
+        voluntary_needed = n_proj * 2
+        context["timeout_capacity_summary"] = {
+            "description": (
+                "Solver timed out without finding a feasible solution. "
+                "Analyze capacity metrics to identify the most likely bottleneck."
+            ),
+            "professor_count": n_prof,
+            "project_count": n_proj,
+            "session_count": len(sessions),
+            "total_voluntary_capacity": total_cap,
+            "voluntary_roles_needed": voluntary_needed,
+            "capacity_deficit": max(0, voluntary_needed - total_cap),
+            "sessions_deficit": max(0, n_proj - len(sessions)),
+            "unavailabilities_count": len(unavailabilities),
+            "professors_with_unavailabilities": len({u["professor_id"] for u in unavailabilities}),
+            "conflict_pairs": len(conflicts),
+        }
 
     # --- CASE 1: Slot capacity (not enough sessions for all projects) ---
     if "project_slot_capacity" in failed_types:
@@ -500,6 +524,30 @@ def _write_scores_to_redis(request: ReflectRequest, reflector_result: dict[str, 
         logger.exception("Failed to write reflector scores to Redis for %s: %s", request_id, exc)
 
 
+def _override_ratings_with_evaluator(result: dict[str, Any], solver_result: dict[str, Any]) -> None:
+    """Replace LLM-generated ratings with deterministic evaluator scores.
+
+    The LLM tends to output rating=0 because it has no formula. This patches
+    each compromised_solution entry in the result dict using the same log-scale
+    formula as ReflectorEvaluator.score_solutions().
+    """
+    solutions = list((solver_result or {}).get("solutions") or [])
+    if not solutions:
+        return
+
+    evaluator = ReflectorEvaluator()
+    scored = evaluator.score_solutions(solutions)
+    score_by_index = {int(r["solution_index"]): r for r in scored}
+
+    for cs in result.get("compromised_solutions") or []:
+        idx = int(cs.get("solution_index") or 0)
+        review = score_by_index.get(idx)
+        if review:
+            cs["rating"] = review["rating"]
+            cs["total_penalty"] = review["total_penalty"]
+            cs["violations_count"] = review["violations_count"]
+
+
 def _build_compromised_reviews(solutions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     evaluator = ReflectorEvaluator()
     # evaluator.score_solutions already sorts and returns review dicts
@@ -547,6 +595,11 @@ def _build_relaxation_suggestions(
     suggestions: list[dict[str, Any]] = []
     seen: set[str] = set()
 
+    # cp_sat_timeout needs its own capacity-based analysis rather than a generic action
+    is_timeout = any(fc.get("constraint") == "cp_sat_timeout" for fc in failed_constraints)
+    if is_timeout:
+        return _build_timeout_suggestions(solver_payload or {})
+
     for item in failed_constraints:
         constraint = str(item.get("constraint") or "unknown_constraint")
         details = item.get("details") or {}
@@ -567,6 +620,109 @@ def _build_relaxation_suggestions(
 
         suggestions.append(suggestion)
         seen.add(key)
+
+    return suggestions
+
+
+def _build_timeout_suggestions(solver_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Generate capacity-based relaxation suggestions when the solver timed out."""
+    suggestions: list[dict[str, Any]] = []
+    professors = solver_payload.get("professors") or []
+    projects = solver_payload.get("projects") or []
+    sessions = solver_payload.get("sessions") or []
+    unavailabilities = solver_payload.get("unavailabilities") or []
+    conflicts = solver_payload.get("conflicts") or []
+
+    n_projects = len(projects)
+    n_professors = max(1, len(professors))
+    n_sessions = len(sessions)
+
+    total_cap = sum(p.get("max_juries", 2) for p in professors)
+    voluntary_needed = n_projects * 2  # president + examiner roles
+    min_cap_needed = -(-voluntary_needed // n_professors)  # ceiling division
+
+    # 1. Professor capacity vs demand
+    if total_cap < voluntary_needed:
+        suggestions.append({
+            "constraint": "professor_capacity",
+            "action": f"Augmenter max_juries à ≥ {min_cap_needed} par professeur",
+            "reason": (
+                f"{n_professors} professeurs × capacité totale {total_cap} < "
+                f"{n_projects} projets × 2 rôles = {voluntary_needed} assignations requises. "
+                f"Déficit : {voluntary_needed - total_cap} créneau(x)."
+            ),
+            "details": {
+                "professors": n_professors,
+                "total_capacity": total_cap,
+                "voluntary_needed": voluntary_needed,
+                "deficit": voluntary_needed - total_cap,
+                "min_max_juries_needed": min_cap_needed,
+            },
+            "patch": {
+                "op": "set",
+                "path": "constraints.hard_max_juries",
+                "value": min_cap_needed,
+            },
+        })
+
+    # 2. Not enough session slots for all projects
+    if n_sessions < n_projects:
+        suggestions.append({
+            "constraint": "session_capacity",
+            "action": f"Créer ≥ {n_projects - n_sessions} créneau(x) supplémentaire(s)",
+            "reason": (
+                f"Seulement {n_sessions} créneaux disponibles pour {n_projects} projets — "
+                "chaque projet doit avoir un créneau assigné."
+            ),
+            "details": {
+                "sessions": n_sessions,
+                "projects": n_projects,
+                "deficit": n_projects - n_sessions,
+            },
+            "patch": None,
+        })
+
+    # 3. Unavailabilities blocking the solution space
+    if unavailabilities:
+        blocked_profs = len({u["professor_id"] for u in unavailabilities})
+        suggestions.append({
+            "constraint": "unavailability_density",
+            "action": "Réviser ou réduire les indisponibilités des professeurs",
+            "reason": (
+                f"{blocked_profs}/{n_professors} professeur(s) ont des indisponibilités "
+                f"({len(unavailabilities)} au total) qui réduisent fortement l'espace de solutions."
+            ),
+            "details": {
+                "professors_with_unavailabilities": blocked_profs,
+                "total_unavailabilities": len(unavailabilities),
+            },
+            "patch": None,
+        })
+
+    # 4. Conflict-of-interest pairs further restrict assignment
+    if conflicts:
+        suggestions.append({
+            "constraint": "professor_conflicts",
+            "action": "Réviser les conflits d'intérêt entre professeurs",
+            "reason": (
+                f"{len(conflicts)} paire(s) de professeurs conflictuelles réduisent "
+                "les combinaisons valides — supprimer les contraintes inutiles peut débloquer le solveur."
+            ),
+            "details": {"conflict_pairs": len(conflicts)},
+            "patch": None,
+        })
+
+    # 5. Always offer timeout increase as last resort
+    suggestions.append({
+        "constraint": "cp_sat_timeout",
+        "action": "Augmenter SOLVER_MAX_TIME_SECONDS au-delà de 180s",
+        "reason": (
+            "Le solveur a dépassé la limite de temps sans trouver de solution. "
+            "Si le problème est faisable, allouer plus de temps peut suffire."
+        ),
+        "details": {"current_timeout_seconds": 180},
+        "patch": None,
+    })
 
     return suggestions
 

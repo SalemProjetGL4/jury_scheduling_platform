@@ -36,10 +36,10 @@ def solve(data: dict[str, Any]) -> dict[str, Any]:
         }
 
     options = data.get("solver_options", {})
-    # Default to 1 solution: the frontend shows only one, and each extra solution
-    # costs up to max_time_in_seconds — 3 solutions at 240s each = 720s which
-    # exceeds the 600s gateway timeout. Callers may override via solver_options.
-    max_solutions = _as_positive_int(options.get("max_solutions"), default=1)
+    # Default to 3 solutions so the UI can rank them. For large models, each
+    # solution is found quickly (stop_after_first) then excluded via no-good
+    # cuts, so 3 solutions adds only marginal time.
+    max_solutions = _as_positive_int(options.get("max_solutions"), default=3)
     include_soft_diagnostics = bool(options.get("include_soft_diagnostics", True))
 
     # Auto-detect large models by total variable count (professors × projects × 2 roles × slots).
