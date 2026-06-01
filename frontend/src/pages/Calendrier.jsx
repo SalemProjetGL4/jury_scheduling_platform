@@ -608,6 +608,24 @@ export default function Calendrier() {
     return result
   }, [calendarData, selectedRoom, selectedFiliere])
 
+  const workloadRows = useMemo(() => {
+    const map = new Map()
+    events.forEach(ev => {
+      [
+        { name: ev.presidentName,  role: 'president'  },
+        { name: ev.examinerName,   role: 'examiner'   },
+        { name: ev.supervisorName, role: 'supervisor' },
+      ].forEach(({ name, role }) => {
+        if (!name || name === '—') return
+        if (!map.has(name)) map.set(name, { name, president: 0, examiner: 0, supervisor: 0 })
+        map.get(name)[role]++
+      })
+    })
+    return Array.from(map.values())
+      .map(r => ({ ...r, total: r.president + r.examiner + r.supervisor }))
+      .sort((a, b) => b.total - a.total)
+  }, [events])
+
   const dayKeys = visibleDays.map(d => d.key)
   const totalAssignments = selectedSolution?.rawAssignments?.length
     ?? workflowResult?.solver_result?.assignments?.length
@@ -844,6 +862,51 @@ export default function Calendrier() {
               {events.length} soutenance{events.length !== 1 ? 's' : ''} affichée{events.length !== 1 ? 's' : ''}
             </span>
           </div>
+
+          {/* Workload summary */}
+          {workloadRows.length > 0 && (
+            <div style={{ padding: '16px 20px 20px', borderTop: '0.5px solid #e2e8f0' }}>
+              <p style={{ margin: '0 0 12px 0', fontSize: '13px', fontWeight: 700, color: '#0f172a' }}>Charge des jurys</p>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead>
+                    <tr style={{ background: '#f8fafc', borderBottom: '0.5px solid #e2e8f0' }}>
+                      {[
+                        { label: 'Professeur',   align: 'left'   },
+                        { label: 'Président',    align: 'center' },
+                        { label: 'Examinateur',  align: 'center' },
+                        { label: 'Encadrant',    align: 'center' },
+                        { label: 'Total',        align: 'center' },
+                      ].map(({ label, align }) => (
+                        <th key={label} style={{ padding: '8px 12px', textAlign: align, fontWeight: 600, color: '#64748b', fontSize: '11px', letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+                          {label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {workloadRows.map((row, i) => (
+                      <tr key={row.name} style={{ borderBottom: '0.5px solid #f1f5f9', background: i % 2 === 0 ? '#fff' : '#fafafa' }}>
+                        <td style={{ padding: '7px 12px', fontWeight: 500, color: '#0f172a' }}>{row.name}</td>
+                        <td style={{ padding: '7px 12px', textAlign: 'center', color: row.president  > 0 ? '#166534' : '#cbd5e1' }}>
+                          {row.president  > 0 ? row.president  : '–'}
+                        </td>
+                        <td style={{ padding: '7px 12px', textAlign: 'center', color: row.examiner   > 0 ? '#6b21a8' : '#cbd5e1' }}>
+                          {row.examiner   > 0 ? row.examiner   : '–'}
+                        </td>
+                        <td style={{ padding: '7px 12px', textAlign: 'center', color: row.supervisor > 0 ? '#1e40af' : '#cbd5e1' }}>
+                          {row.supervisor > 0 ? row.supervisor : '–'}
+                        </td>
+                        <td style={{ padding: '7px 12px', textAlign: 'center', fontWeight: 600, color: '#0f172a' }}>
+                          {row.total}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
