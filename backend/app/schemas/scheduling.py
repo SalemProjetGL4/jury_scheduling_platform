@@ -74,7 +74,7 @@ class SlotOut(SlotBase, ORMBase):
 
 class ProjectBase(BaseModel):
     title: str
-    domain_id: int
+    domain_ids: list[int]
     supervisor_id: int
     student_id: int
     session_id: int
@@ -88,7 +88,7 @@ class ProjectCreate(ProjectBase):
 
 class ProjectUpdate(BaseModel):
     title: str | None = None
-    domain_id: int | None = None
+    domain_ids: list[int] | None = None
     supervisor_id: int | None = None
     student_id: int | None = None
     session_id: int | None = None

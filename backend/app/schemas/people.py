@@ -27,6 +27,7 @@ class ProfessorUpdate(BaseModel):
 
 class ProfessorOut(ProfessorBase, ORMBase):
     id: int
+    domain_ids: list[int] = []
 
 
 class StudentBase(BaseModel):

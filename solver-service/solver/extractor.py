@@ -252,8 +252,7 @@ def evaluate_soft_constraint_violations(
         proj = project_by_id.get(proj_id)
         if not proj:
             continue
-        project_domain = proj.get("domain_id")
-        project_kw = _normalize_keywords(list(proj.get("domain_keywords") or []))
+        project_domain_ids = set(proj.get("domain_ids") or ([] if proj.get("domain_id") is None else [proj.get("domain_id")]))
         for role_key in ("president", "examiner"):
             pid = assignment.get("roles", {}).get(role_key)
             if pid is None:
@@ -261,18 +260,16 @@ def evaluate_soft_constraint_violations(
             prof = professor_by_id.get(pid)
             if not prof:
                 continue
-            prof_domains = {int(v) for v in (prof.get("domain_ids") or []) if v}
-            prof_domain = prof.get("domain_id")
-            prof_kw = _normalize_keywords(list(prof.get("specialities") or []))
-
-            has_domain_match = False
-            if project_domain and prof_domains:
-                has_domain_match = project_domain in prof_domains
-            elif project_domain and prof_domain:
-                has_domain_match = project_domain == prof_domain
-
-            has_keyword_match = bool(project_kw and prof_kw and (project_kw & prof_kw))
-            if not (has_domain_match or has_keyword_match):
+            raw_prof_domains = prof.get("domain_ids") or []
+            if not raw_prof_domains and prof.get("domain_id"):
+                raw_prof_domains = [prof["domain_id"]]
+            prof_domain_ids = set(raw_prof_domains)
+            prof_dept = prof.get("department_id")
+            proj_filiere_dept = proj.get("filiere_department_id")
+            domain_match = bool(prof_domain_ids & project_domain_ids)
+            if not domain_match:
+                expertise_violation += 2
+            elif proj_filiere_dept and prof_dept != proj_filiere_dept:
                 expertise_violation += 1
 
     expertise_w = normalize_weight(weights.get("expertise", 5), default=5)

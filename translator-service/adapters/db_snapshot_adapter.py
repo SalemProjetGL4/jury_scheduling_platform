@@ -51,6 +51,7 @@ def build_db_snapshot(session_id: int | None = None) -> dict[str, Any]:
                         ARRAY[]::bigint[]
                     ) AS domain_ids,
                     MIN(pd.domain_id) AS domain_id,
+                    p.department_id,
                     COALESCE(
                         ARRAY_AGG(DISTINCT d.name) FILTER (WHERE d.name IS NOT NULL),
                         ARRAY[]::text[]
@@ -58,7 +59,7 @@ def build_db_snapshot(session_id: int | None = None) -> dict[str, Any]:
                 FROM professor p
                 LEFT JOIN professor_domain pd ON pd.professor_id = p.id
                 LEFT JOIN domain d ON d.id = pd.domain_id
-                GROUP BY p.id, p.name, p.email, p.preferences, p.max_juries
+                GROUP BY p.id, p.name, p.email, p.preferences, p.max_juries, p.department_id
                 ORDER BY p.id
                 """
             )
@@ -68,12 +69,18 @@ def build_db_snapshot(session_id: int | None = None) -> dict[str, Any]:
             project_rows = conn.execute(
                 text(
                     """
-                      SELECT pr.id, pr.title, pr.domain_id AS domain_id, d.name AS domain_name,
-                           pr.supervisor_id, pr.student_id, st.name AS student_name
+                    SELECT pr.id, pr.title,
+                        pr.domain_ids[1] AS domain_id,
+                        d.name AS domain_name,
+                        pr.supervisor_id, pr.student_id, st.name AS student_name,
+                        st.filiere_id AS student_filiere_id,
+                        f.department_id AS filiere_department_id,
+                        pr.domain_ids,
+                        CASE WHEN d.name IS NOT NULL THEN ARRAY[d.name]::text[] ELSE ARRAY[]::text[] END AS domain_names
                     FROM project pr
-                      LEFT JOIN domain d ON d.id = pr.domain_id
+                    LEFT JOIN domain d ON d.id = pr.domain_ids[1]
                     LEFT JOIN student st ON st.id = pr.student_id
-                    WHERE pr.session_id = :session_id
+                    LEFT JOIN filiere f ON f.id = st.filiere_id
                     ORDER BY pr.id
                     """
                 ),
@@ -129,6 +136,18 @@ def build_db_snapshot(session_id: int | None = None) -> dict[str, Any]:
             )
         ).mappings().all()
 
+        # load canonical domain rows for keyword mapping
+        domain_rows = conn.execute(text("SELECT id, name FROM domain ORDER BY id")).mappings().all()
+
+        dept_domain_rows = conn.execute(
+            text("SELECT department_id, domain_id FROM department_domain ORDER BY department_id, domain_id")
+        ).mappings().all()
+
+    dept_to_domain_ids: dict[int, list[int]] = {}
+    for row in dept_domain_rows:
+        dept_id = int(row["department_id"])
+        dept_to_domain_ids.setdefault(dept_id, []).append(int(row["domain_id"]))
+
     sessions = [
         {
             "id": int(row["id"]),
@@ -144,6 +163,63 @@ def build_db_snapshot(session_id: int | None = None) -> dict[str, Any]:
     ]
 
     project_keywords_by_id = _extract_project_keywords(project_rows)
+
+    def map_keywords_to_domain_ids(keywords: list[str], domain_rows: list[dict[str, Any]], limit: int = 3) -> list[int]:
+        """Map normalized keywords to domain ids using exact, token, bucket and substring heuristics.
+        Returns a list of domain ids (deduplicated, preserving order) limited to `limit`.
+        """
+        if not keywords:
+            return []
+
+        # prepare lookups
+        name_to_id: dict[str, int] = {str(d["name"]).strip().lower(): int(d["id"]) for d in domain_rows}
+        token_map: dict[int, set[str]] = {}
+        for d in domain_rows:
+            toks = set(re.findall(r"[\w]+", str(d["name"]).lower()))
+            token_map[int(d["id"])]=toks
+
+        results: list[int] = []
+
+        for kw in keywords:
+            k = str(kw).strip().lower()
+            if not k:
+                continue
+
+            # 1) exact domain name
+            if k in name_to_id:
+                did = name_to_id[k]
+                if did not in results:
+                    results.append(did)
+                if len(results) >= limit:
+                    break
+                continue
+
+            # 2) token/substring match with domain tokens
+            for did, toks in token_map.items():
+                if k in toks or any(k == t or k in t or t in k for t in toks):
+                    if did not in results:
+                        results.append(did)
+                    if len(results) >= limit:
+                        break
+            if len(results) >= limit:
+                break
+
+            # 3) bucket mapping
+            bucket = _keyword_bucket(k)
+            if bucket:
+                # exact bucket match to domain name
+                if bucket in name_to_id:
+                    did = name_to_id[bucket]
+                    if did not in results:
+                        results.append(did)
+                # substring match on domain names
+                for d in domain_rows:
+                    if bucket in str(d["name"]).lower() and int(d["id"]) not in results:
+                        results.append(int(d["id"]))
+                if len(results) >= limit:
+                    break
+
+        return results[:limit]
     projects: list[dict[str, Any]] = []
     for row in project_rows:
         title = str(row["title"] or "")
@@ -156,19 +232,32 @@ def build_db_snapshot(session_id: int | None = None) -> dict[str, Any]:
         logger.info(
             "PROJECT KEYWORDS — id=%s domain_id=%s title=%r keywords=%s",
             project_id,
-            int(row["domain_id"]),
+            (int(row["domain_id"]) if row.get("domain_id") is not None else None),
             title,
             keywords,
         )
+        # derive domain_ids: prefer DB-provided, then filiere department, then keywords
+        raw_domain_ids = list(row.get("domain_ids") or [])
+        domain_ids = [int(d) for d in raw_domain_ids if d is not None]
+        if not domain_ids:
+            filiere_dept_id = int(row.get("filiere_department_id") or 0)
+            if filiere_dept_id:
+                domain_ids = dept_to_domain_ids.get(filiere_dept_id, [])
+        if not domain_ids:
+            domain_ids = map_keywords_to_domain_ids(keywords, domain_rows)
+
         projects.append(
             {
                 "id": project_id,
                 "title": title,
-                "domain_id": int(row["domain_id"]),
+                "domain_id": int(row["domain_id"] or 0) if row.get("domain_id") is not None else 0,
+                "domain_ids": domain_ids,
                 "domain_name": domain_name,
                 "domain_keywords": keywords,
                 "supervisor_id": int(row["supervisor_id"]),
                 "student_name": str(row["student_name"] or ""),
+                "student_filiere_id": int(row["student_filiere_id"] or 0),
+                "filiere_department_id": int(row["filiere_department_id"] or 0),
             }
         )
 
@@ -198,10 +287,10 @@ def build_db_snapshot(session_id: int | None = None) -> dict[str, Any]:
                 "id": int(row["id"]),
                 "name": str(row["name"]),
                 "email": str(row["email"]),
-                "specialities": list(row["preferences"] or []),
                 "max_juries": int(row["max_juries"]),
-                "domain_ids": [int(value) for value in (row["domain_ids"] or [])],
                 "domain_id": int(row["domain_id"] or 0),
+                "domain_ids": [int(d) for d in (row.get("domain_ids") or []) if d is not None],
+                "department_id": int(row["department_id"] or 0),
                 "domain_name": (list(row["domain_names"] or [""])[0] if list(row["domain_names"] or []) else ""),
             }
             for row in professor_rows
@@ -359,15 +448,18 @@ def _extract_project_keywords_with_llm(project_rows: list[dict[str, Any]]) -> di
     except Exception:
         return {}
 
-    payload = [
-        {
-            "id": int(row["id"]),
-            "title": str(row["title"] or ""),
-            "domain_id": int(row["domain_id"]),
-            "domain_name": str(row["domain_name"] or ""),
-        }
-        for row in project_rows
-    ]
+    try:
+        payload = [
+            {
+                "id": int(row["id"]),
+                "title": str(row["title"] or ""),
+                "domain_id": int(row["domain_id"] or 0),
+                "domain_name": str(row["domain_name"] or ""),
+            }
+            for row in project_rows
+        ]
+    except Exception:
+        return {}
 
     system_prompt = (
         "You extract concise general technical keywords from project titles. "
