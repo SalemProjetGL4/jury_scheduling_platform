@@ -193,7 +193,17 @@ def _run_workflow(request_id: str) -> None:
 
     triggered_at = utc_now_iso()
     logger.info("WORKFLOW START — request_id=%s prompt=%r", request_id, (state.get("user_prompt") or "")[:120])
-    result = graph.invoke(state)
+
+    result = None
+    # stream(stream_mode="values") yields the full accumulated state after each node,
+    # so we can push intermediate updates to the store for real-time frontend polling.
+    for accumulated_state in graph.stream(state, stream_mode="values"):
+        store.put(accumulated_state)
+        result = accumulated_state
+
+    if result is None:
+        result = store.get(request_id) or state
+
     logger.info(
         "WORKFLOW END — request_id=%s final_status=%s errors=%s route=%s",
         request_id,
@@ -209,7 +219,6 @@ def _run_workflow(request_id: str) -> None:
         len(solver.get("assignments") or []),
         solver.get("failed_constraints"),
     )
-    store.put(result)
     _write_latency_report(result, triggered_at)
 
 

@@ -103,6 +103,13 @@ def mark_node_start(state: SchedulingState, node: str) -> None:
         NodeEvent(node=node, started_at=utc_now_iso(), ended_at=None, status="running", summary=None)
     )
     _logger.info("[%s] ▶ node START — request_id=%s", node, state.get("request_id", "?"))
+    # Flush "running" state to the store immediately so the frontend sees the spinner
+    # without waiting for this node to finish. Lazy import avoids circular dependency.
+    try:
+        from store.workflow_store import store as _store
+        _store.put(state)
+    except Exception:
+        pass
 
 
 def mark_node_end(state: SchedulingState, node: str, *, status: NodeStatus, summary: str | None) -> None:

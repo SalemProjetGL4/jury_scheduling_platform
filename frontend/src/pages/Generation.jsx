@@ -12,13 +12,59 @@ const WIZARD_STEPS = [
   { n: 4, label: 'Lancer la génération', sub: 'Optimiser et générer'  },
 ]
 
-const PIPELINE_NODES = [
-  { key: 'translator',   label: 'Traduction des contraintes' },
-  { key: 'orchestrator', label: 'Analyse de la demande'      },
-  { key: 'solver',       label: 'Résolution (OR-Tools)'      },
-  { key: 'updater',      label: 'Mise a jour des donnees'    },
-  { key: 'reflector',    label: 'Analyse de qualite'         },
-]
+const NODE_LABELS = {
+  translator:   'Traduction des contraintes',
+  orchestrator: 'Analyse de la demande',
+  solver:       'Résolution (OR-Tools)',
+  updater:      'Mise a jour des donnees',
+  reflector:    'Analyse de qualite',
+}
+
+// Canonical execution order per route
+const ROUTE_SEQUENCES = {
+  EDIT:     ['translator', 'orchestrator', 'updater'],
+  GENERATE: ['translator', 'orchestrator', 'solver', 'reflector'],
+  default:  ['translator', 'orchestrator'], // route not yet determined — show only common steps
+}
+
+// Build the display node list in chronological (execution) order.
+// Nodes that actually ran come first (in history order), then expected
+// future nodes for the inferred route.
+function buildDisplayNodes(nodeHistory, currentNode, hintRoute = null) {
+  const ranKeys = new Set([
+    ...nodeHistory.map(e => e.node).filter(k => NODE_LABELS[k]),
+    ...(currentNode && NODE_LABELS[currentNode] ? [currentNode] : []),
+  ])
+
+  const isEdit     = ranKeys.has('updater')
+  const isGenerate = ranKeys.has('solver') || ranKeys.has('reflector')
+  const sequence   = isEdit ? ROUTE_SEQUENCES.EDIT
+                   : isGenerate ? ROUTE_SEQUENCES.GENERATE
+                   : (hintRoute && ROUTE_SEQUENCES[hintRoute]) ? ROUTE_SEQUENCES[hintRoute]
+                   : ROUTE_SEQUENCES.default
+
+  const seen    = new Set()
+  const ordered = []
+
+  // 1. Nodes in history order
+  for (const entry of nodeHistory) {
+    if (NODE_LABELS[entry.node] && !seen.has(entry.node)) {
+      seen.add(entry.node)
+      ordered.push(entry.node)
+    }
+  }
+  // 2. Currently running node (if not yet in history)
+  if (currentNode && NODE_LABELS[currentNode] && !seen.has(currentNode)) {
+    seen.add(currentNode)
+    ordered.push(currentNode)
+  }
+  // 3. Expected future nodes (pending)
+  for (const key of sequence) {
+    if (!seen.has(key)) ordered.push(key)
+  }
+
+  return ordered.map(key => ({ key, label: NODE_LABELS[key] }))
+}
 
 const SUGGESTIONS = [
   'Éviter les conflits',
@@ -41,11 +87,12 @@ function parseIsoMs(value) {
   return Number.isNaN(ms) ? null : ms
 }
 
-function formatDuration(ms) {
+function formatDuration(ms, live = false) {
   if (ms == null) return '—'
-  const totalSeconds = Math.max(0, Math.round(ms / 1000))
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000))
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
+  if (live) return `${minutes > 0 ? `${minutes}:` : ''}${String(seconds).padStart(minutes > 0 ? 2 : 1, '0')}s`
   if (minutes > 0) return `${minutes}m ${seconds}s`
   return `${seconds}s`
 }
@@ -54,8 +101,8 @@ function findNodeEntry(nodeHistory, nodeName) {
   return [...nodeHistory].reverse().find(e => e.node === nodeName)
 }
 
-function computePipelineMeta(nodeHistory, currentNode) {
-  const pipelineKeys = new Set(PIPELINE_NODES.map(n => n.key))
+function computePipelineMeta(nodeHistory, currentNode, displayNodes) {
+  const pipelineKeys = new Set(displayNodes.map(n => n.key))
   const relevant = nodeHistory.filter(e => pipelineKeys.has(e.node))
   const completed = relevant.filter(e => e.started_at && e.ended_at)
 
@@ -83,18 +130,19 @@ function computePipelineMeta(nodeHistory, currentNode) {
     elapsedMs = Math.max(0, runningEnd - start)
   }
 
-  const totalEstimatedMs = avgMs ? avgMs * PIPELINE_NODES.length : null
+  const totalEstimatedMs = avgMs ? avgMs * displayNodes.length : null
   const etaMs = totalEstimatedMs != null && elapsedMs != null
     ? Math.max(0, totalEstimatedMs - elapsedMs)
     : null
 
-  const currentIndex = PIPELINE_NODES.findIndex(n => n.key === currentNode)
+  const currentIndex = displayNodes.findIndex(n => n.key === currentNode)
   const lastCompleted = completed.length ? completed[completed.length - 1] : null
   const stepKey = currentIndex >= 0 ? currentNode : lastCompleted?.node
-  const stepIndex = PIPELINE_NODES.findIndex(n => n.key === stepKey)
+  const stepIndex = displayNodes.findIndex(n => n.key === stepKey)
+  const total = displayNodes.length
   const stepLabel = stepIndex >= 0
-    ? `Etape ${stepIndex + 1}/${PIPELINE_NODES.length} — ${PIPELINE_NODES[stepIndex].label}`
-    : `Etape 0/${PIPELINE_NODES.length}`
+    ? `Etape ${stepIndex + 1}/${total} — ${displayNodes[stepIndex].label}`
+    : `Etape 0/${total}`
 
   return {
     stepLabel,
@@ -112,6 +160,15 @@ export default function Generation() {
   const [statusPayload, setStatusPayload] = useState(null)
   const [error, setError] = useState('')
   const abortRef = useRef(null)
+  const [, setTick] = useState(0)
+
+  // Force a re-render every second while running so timers update live
+  useEffect(() => {
+    if (phase !== 'running') return
+    const id = setInterval(() => setTick(t => t + 1), 1000)
+    return () => clearInterval(id)
+  }, [phase])
+
   const hasSolution = Boolean(
     workflowResult?.solver_result?.solutions?.length || workflowResult?.solver_result?.assignments?.length,
   )
@@ -153,7 +210,6 @@ export default function Generation() {
     setError('')
     setPhase('running')
     setStatusPayload(null)
-    const requestedRoute = hasSolution && mode === 'edit' ? 'EDIT' : 'GENERATE'
     const oldSolverResult = hasSolution && mode === 'edit'
       ? workflowResult?.solver_result
       : null
@@ -198,7 +254,9 @@ export default function Generation() {
   const nodeHistory = statusPayload?.node_history || []
   const currentNode = statusPayload?.current_node || ''
   const finalStatus = statusPayload?.final_status || 'running'
-  const pipelineMeta = computePipelineMeta(nodeHistory, currentNode)
+  const requestedRoute = hasSolution && mode === 'edit' ? 'EDIT' : 'GENERATE'
+  const displayNodes = buildDisplayNodes(nodeHistory, currentNode, requestedRoute)
+  const pipelineMeta = computePipelineMeta(nodeHistory, currentNode, displayNodes)
 
   return (
     <div className="flex gap-6 items-start">
@@ -348,7 +406,7 @@ export default function Generation() {
               </div>
             </div>
             <div className="space-y-2">
-              {PIPELINE_NODES.map(node => {
+              {displayNodes.map(node => {
                 const st = nodeStatus(node.key, nodeHistory, currentNode)
                 const entry = findNodeEntry(nodeHistory, node.key)
                 const startMs = parseIsoMs(entry?.started_at)
@@ -385,12 +443,14 @@ export default function Generation() {
                       {node.label}
                     </span>
                     </div>
-                    <div className="flex items-center gap-2 text-[11px] text-gray-400">
-                      <span>{statusLabel}</span>
+                    <div className="flex items-center gap-2 text-[11px]">
+                      <span className={st === 'running' ? 'text-blue-500 font-medium' : 'text-gray-400'}>
+                        {statusLabel}
+                      </span>
                       <span className="text-gray-300">•</span>
-                      <span>
+                      <span className={`tabular-nums ${st === 'running' ? 'text-blue-600 font-semibold' : 'text-gray-400'}`}>
                         {st === 'running'
-                          ? `~ ${formatDuration(runningElapsed)}`
+                          ? formatDuration(runningElapsed, true)
                           : formatDuration(durationMs)
                         }
                       </span>
