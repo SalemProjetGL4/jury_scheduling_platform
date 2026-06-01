@@ -27,6 +27,7 @@ def translator_refine_node(state: SchedulingState) -> SchedulingState:
             request_id=state["request_id"],
             prompt=enriched_prompt,
             user_id=state.get("user_id"),
+            session_id=state.get("session_id"),
         )
         parsed = TranslatorGatewayResponse.model_validate(response)
 

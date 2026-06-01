@@ -81,6 +81,7 @@ def build_db_snapshot(session_id: int | None = None) -> dict[str, Any]:
                     LEFT JOIN domain d ON d.id = pr.domain_ids[1]
                     LEFT JOIN student st ON st.id = pr.student_id
                     LEFT JOIN filiere f ON f.id = st.filiere_id
+                    WHERE pr.session_id = :session_id
                     ORDER BY pr.id
                     """
                 ),
