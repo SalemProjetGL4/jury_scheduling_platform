@@ -63,9 +63,8 @@ def translate_prompt(*, request_id: str, prompt: str, user_id: str | None) -> di
             )
             recognized.extend(llm_recognized)
             unrecognized.extend(llm_unrecognized)
-    except Exception:
-        # Intentional fallback: continue with deterministic heuristic extraction.
-        pass
+    except Exception as _llm_exc:
+        logger.warning("LLM extraction failed — falling back to base payload: %s", _llm_exc, exc_info=True)
 
     validated_payload, validation_error = validate_solver_payload(payload)
     if validated_payload is None:

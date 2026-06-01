@@ -68,6 +68,7 @@ class SlotUpdate(BaseModel):
 class SlotOut(SlotBase, ORMBase):
     id: int
     room: str   # resolved from room_obj.name via the model property
+    date: dt.date  # resolved from start_time.date() via the model property
 
 
 # ── Project ───────────────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ from typing import Any
 
 from ortools.sat.python import cp_model
 
-from solver.constraints.rule_utils import collect_rule_specs
+from solver.constraints.rule_utils import collect_custom_bound_terms, collect_rule_specs
 from solver.variables import ROLES, VariableBundle
 from solver.constraints.rule_utils import normalize_weight
 
@@ -284,6 +284,36 @@ def build_custom_soft_penalty(
                     )
                 )
                 penalty_terms.append(weight * afternoon_count)
+
+        elif name == "custom_bound":
+            terms = collect_custom_bound_terms(
+                payload,
+                vars_.x,
+                professor_ids,
+                project_ids,
+                sessions,
+            )
+            if not terms:
+                continue
+            operator = str(payload.get("operator", "<=")).strip()
+            bound = _as_int(payload.get("bound", 0)) or 0
+            n_terms = len(terms)
+            expr_sum = sum(terms)
+            if operator == "<=":
+                violation = model.NewIntVar(0, n_terms, f"cb_viol_{id(payload)}")
+                model.Add(violation >= expr_sum - bound)
+                model.Add(violation >= 0)
+                penalty_terms.append(weight * violation)
+            elif operator == ">=":
+                shortfall = model.NewIntVar(0, n_terms, f"cb_short_{id(payload)}")
+                model.Add(shortfall >= bound - expr_sum)
+                model.Add(shortfall >= 0)
+                penalty_terms.append(weight * shortfall)
+            elif operator == "==":
+                deviation = model.NewIntVar(0, n_terms, f"cb_dev_{id(payload)}")
+                model.Add(deviation >= expr_sum - bound)
+                model.Add(deviation >= -(expr_sum - bound))
+                penalty_terms.append(weight * deviation)
 
     return sum(penalty_terms) if penalty_terms else 0
 

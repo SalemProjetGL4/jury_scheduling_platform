@@ -163,12 +163,11 @@ function buildChartsFromWorkflow(sol) {
   const byDate = new Map(), bySalle = new Map()
   sol.rawAssignments.forEach(a => {
     if (a.date) byDate.set(a.date, (byDate.get(a.date) || 0) + 1)
-    const room = a.room || 'Salle 2B6-4'
-    bySalle.set(room, (bySalle.get(room) || 0) + 1)
+    if (a.room) bySalle.set(a.room, (bySalle.get(a.room) || 0) + 1)
   })
   return {
     repartitionParJour: Array.from(byDate.entries()).sort().map(([d, v]) => ({ jour: fmt(d), value: v })),
-    repartitionParSalle: Array.from(bySalle.entries()).map(([r, v], i) => ({ name: r, value: v, color: ROOM_COLORS[i % ROOM_COLORS.length] })),
+    repartitionParSalle: Array.from(bySalle.entries()).map(([r, v], i) => ({ name: `Salle ${r}`, value: v, color: ROOM_COLORS[i % ROOM_COLORS.length] })),
   }
 }
 

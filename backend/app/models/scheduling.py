@@ -41,6 +41,10 @@ class Slot(Base):
     def room(self) -> str:
         return self.room_obj.name if self.room_obj else ""
 
+    @property
+    def date(self) -> dt.date:
+        return self.start_time.date()
+
 
 class Project(Base):
     __tablename__ = "project"

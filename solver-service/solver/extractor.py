@@ -45,6 +45,7 @@ def extract_assignments(
                 "session_id": active_session["id"],
                 "date": active_session.get("date"),
                 "period": active_session.get("period"),
+                "room": active_session.get("room"),
                 "roles": role_assignments,
             }
         )

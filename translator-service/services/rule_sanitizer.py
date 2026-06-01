@@ -79,6 +79,61 @@ def sanitize_rule(
                 return None, "session_id not found in database snapshot"
             normalized["session_id"] = session_id
 
+    elif name == "custom_bound":
+        description = str(raw_rule.get("description", "")).strip()
+        if not description:
+            return None, "custom_bound: description is required"
+        operator = str(raw_rule.get("operator", "<=")).strip()
+        if operator not in {"<=", ">=", "=="}:
+            return None, "custom_bound: operator must be <=, >=, or =="
+        bound = as_int(raw_rule.get("bound"))
+        if bound is None or bound < 0:
+            return None, "custom_bound: bound must be a non-negative integer"
+
+        # Validate optional filter IDs against snapshot
+        raw_prof_ids = raw_rule.get("professor_ids")
+        if raw_prof_ids is not None:
+            for pid in raw_prof_ids:
+                if as_int(pid) not in professor_ids:
+                    return None, f"custom_bound: professor_id {pid} not found in snapshot"
+            normalized["professor_ids"] = [int(p) for p in raw_prof_ids]
+
+        raw_proj_ids = raw_rule.get("project_ids")
+        if raw_proj_ids is not None:
+            for pid in raw_proj_ids:
+                if as_int(pid) not in project_ids:
+                    return None, f"custom_bound: project_id {pid} not found in snapshot"
+            normalized["project_ids"] = [int(p) for p in raw_proj_ids]
+
+        raw_sess_ids = raw_rule.get("session_ids")
+        if raw_sess_ids is not None:
+            for sid in raw_sess_ids:
+                if as_int(sid) not in session_ids:
+                    return None, f"custom_bound: session_id {sid} not found in snapshot"
+            normalized["session_ids"] = [int(s) for s in raw_sess_ids]
+
+        raw_roles = raw_rule.get("roles")
+        if raw_roles is not None:
+            valid_roles = [str(r).upper() for r in raw_roles if str(r).upper() in SUPPORTED_ROLES]
+            if not valid_roles:
+                return None, "custom_bound: no valid roles (must be SUPERVISOR, PRESIDENT, or EXAMINER)"
+            normalized["roles"] = valid_roles
+
+        period = str(raw_rule.get("period", "")).strip().lower()
+        if period in {"morning", "afternoon"}:
+            normalized["period"] = period
+
+        date_val = raw_rule.get("date")
+        if date_val is not None:
+            normalized["date"] = str(date_val)
+
+        normalized["description"] = description
+        normalized["operator"] = operator
+        normalized["bound"] = bound
+        if rule_type == "soft":
+            normalized["weight"] = as_float(raw_rule.get("weight", 1.0), default=1.0)
+        return normalized, None
+
     if rule_type == "soft":
         normalized["weight"] = as_float(raw_rule.get("weight", 1.0), default=1.0)
 

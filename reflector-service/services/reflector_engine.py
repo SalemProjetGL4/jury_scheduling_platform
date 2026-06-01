@@ -540,27 +540,6 @@ def _score_solution(violations_count: int, total_penalty: float) -> int:
     return max(0, min(100, score))
 
 
-def _build_violation_explanation(violations: list[dict[str, Any]]) -> str:
-    if not violations:
-        return "No soft constraint violations."
-
-    parts: list[str] = []
-    for violation in violations[:3]:
-        rule = str(violation.get("rule") or "unknown_rule")
-        payload = violation.get("payload") or {}
-        if payload:
-            payload_text = json.dumps(payload, ensure_ascii=True)
-            parts.append(f"{rule} {payload_text}")
-        else:
-            parts.append(rule)
-
-    summary = "; ".join(parts)
-    if len(violations) > 3:
-        summary = f"{summary}; and {len(violations) - 3} more"
-
-    return f"Violations: {summary}."
-
-
 def _build_relaxation_suggestions(
     failed_constraints: list[dict[str, Any]],
     solver_payload: dict[str, Any] | None,
