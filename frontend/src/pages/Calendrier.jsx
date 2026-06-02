@@ -66,11 +66,6 @@ function SlotGroup({ slot }) {
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
           <span style={{ fontSize: '11px', fontWeight: 600, color: '#0f172a' }}>{slot.start} – {slot.end}</span>
-          {count > 1 && (
-            <span style={{ fontSize: '10px', background: '#eff6ff', color: '#1e40af', border: '0.5px solid #bfdbfe', borderRadius: '99px', padding: '1px 7px' }}>
-              {count} salles
-            </span>
-          )}
         </div>
 
         {count === 1 ? (

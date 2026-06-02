@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Download, FileText, FileJson, FileType, Table, Building, Loader2, Archive } from 'lucide-react'
+import { Download, FileText, FileJson, FileType, Table, Loader2, Archive } from 'lucide-react'
 import { saveAs } from 'file-saver'
 import { apiRequest } from '../services/api'
 import { exportToCSV, exportToJSON, enrichAssignments } from '../utils/exportUtils'
@@ -11,7 +11,6 @@ const FORMATS = [
   { icon: Table,           label: 'CSV',           sub: 'Données brutes',          color: 'text-gray-600 bg-gray-100',   iconColor: '#4B5563' },
   { icon: FileJson,        label: 'JSON',          sub: 'Export brut JSON',         color: 'text-teal-600 bg-teal-50',    iconColor: '#0D9488' },
   { icon: FileType,        label: 'Word (docx)',   sub: 'Planning GL + RT',         color: 'text-indigo-600 bg-indigo-50',iconColor: '#4338CA' },
-{ icon: Building,        label: 'Par salle (PDF)', sub: 'Planning par salle',   color: 'text-amber-600 bg-amber-50',    iconColor: '#D97706' },
   { icon: Archive,         label: 'ZIP par prof.',  sub: 'Planning XLSX\npar professeur', color: 'text-emerald-600 bg-emerald-50', iconColor: '#059669' },
 ]
 
@@ -20,7 +19,6 @@ const DEFAULT_SUMMARY = {
   score: '94%',
   soutenances: 312,
   jours: 5,
-  salles: 4,
   conflits: 0,
 }
 
@@ -56,7 +54,6 @@ function buildSummary(session, slots, assignments) {
   const slotIds = new Set(sessionSlots.map(slot => slot.id))
   const sessionAssignments = assignments.filter(item => slotIds.has(item.slot_id))
   const uniqueDates = new Set(sessionSlots.map(slot => slot.date))
-  const uniqueRooms = new Set(sessionSlots.map(slot => slot.room))
   const conflicts = countConflicts(sessionAssignments)
   const scoreValue = sessionAssignments.length ? Math.max(0, 100 - conflicts * 5) : null
 
@@ -65,7 +62,6 @@ function buildSummary(session, slots, assignments) {
     score: scoreValue === null ? '—' : `${scoreValue}%`,
     soutenances: sessionAssignments.length,
     jours: uniqueDates.size,
-    salles: uniqueRooms.size,
     conflits: conflicts,
   }
 }
@@ -252,7 +248,6 @@ export default function Exports() {
           {[
             { val: selectedSolution?.soutenances ?? summary.soutenances, lbl: 'Soutenances' },
             { val: selectedSolution?.jours       ?? summary.jours,       lbl: 'Jours' },
-            { val: selectedSolution?.salles      ?? summary.salles,      lbl: 'Salles' },
             { val: selectedSolution?.conflits    ?? summary.conflits,    lbl: 'Conflits' },
           ].map(({ val, lbl }) => (
             <div key={lbl} className="text-center">
