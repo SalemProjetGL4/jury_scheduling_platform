@@ -1,13 +1,12 @@
 import { NavLink } from 'react-router-dom'
 import {
-  CalendarDays, LayoutDashboard, Database, SlidersHorizontal,
-  Sparkles, BarChart2, Activity,
+  CalendarDays, LayoutDashboard, Database,
+  Sparkles, BarChart2,
 } from 'lucide-react'
 
 const navItems = [
   { to: '/',            icon: LayoutDashboard,    label: 'Tableau de bord' },
   { to: '/donnees',     icon: Database,           label: 'Données' },
-  { to: '/contraintes', icon: SlidersHorizontal,  label: 'Contraintes' },
   { to: '/generation',  icon: Sparkles,           label: 'Génération' },
   { to: '/resultats',   icon: BarChart2,          label: 'Résultats' },
 ]
@@ -44,22 +43,6 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* Bottom */}
-      <div className="px-3 py-4 border-t border-gray-100">
-        <NavLink
-          to="/monitoring"
-          className={({ isActive }) =>
-            `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-              isActive
-                ? 'bg-blue-600 text-white'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-            }`
-          }
-        >
-          <Activity size={18} />
-          Monitoring
-        </NavLink>
-      </div>
     </aside>
   )
 }

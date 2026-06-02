@@ -979,6 +979,10 @@ function ProjetsTab() {
   const [selectedProjectIds, setSelectedProjectIds] = useState(new Set())
   const [deleting, setDeleting]                   = useState(false)
   const [deleteResult, setDeleteResult]           = useState('')
+  const [editingProject, setEditingProject]       = useState(null)
+  const [editDomainIds, setEditDomainIds]         = useState([])
+  const [editSaving, setEditSaving]               = useState(false)
+  const [editError, setEditError]                 = useState('')
   const headerCheckboxRef                         = useRef(null)
 
   useEffect(() => {
@@ -1085,6 +1089,49 @@ function ProjetsTab() {
       alert(e.message || 'Erreur lors de la suppression')
     } finally {
       setDeleting(false)
+    }
+  }
+
+  function openDomainEdit(project) {
+    setEditingProject(project)
+    setEditDomainIds(Array.isArray(project.domain_ids) ? [...project.domain_ids] : [])
+    setEditError('')
+  }
+
+  function closeDomainEdit() {
+    setEditingProject(null)
+    setEditDomainIds([])
+    setEditError('')
+  }
+
+  function addEditDomain(domainId) {
+    const id = Number(domainId)
+    if (!id || editDomainIds.includes(id)) return
+    setEditDomainIds(prev => [...prev, id])
+  }
+
+  function removeEditDomain(id) {
+    setEditDomainIds(prev => prev.filter(d => d !== id))
+  }
+
+  async function handleSaveDomains() {
+    if (!editingProject) return
+    setEditSaving(true)
+    setEditError('')
+    try {
+      await apiRequest(`/projects/${editingProject.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain_ids: editDomainIds }),
+      })
+      setProjects(cur => cur.map(p =>
+        p.id === editingProject.id ? { ...p, domain_ids: editDomainIds } : p
+      ))
+      closeDomainEdit()
+    } catch (e) {
+      setEditError(e.message || 'Erreur lors de la sauvegarde.')
+    } finally {
+      setEditSaving(false)
     }
   }
 
@@ -1321,7 +1368,10 @@ function ProjetsTab() {
                       }
                     </td>
                     <td style={{ ...tdStyle, color: '#64748b' }}>{sessionMap[p.session_id] ?? '—'}</td>
-                    <td style={{ ...tdStyle, textAlign: 'right' }} onClick={e => e.stopPropagation()}>
+                    <td style={{ ...tdStyle, textAlign: 'right', display: 'flex', gap: '4px', justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
+                      <button style={{ ...btnIcon, color: '#2563eb' }} onClick={() => openDomainEdit(p)} title="Modifier les domaines">
+                        <Pencil size={14} />
+                      </button>
                       <button style={{ ...btnIcon, color: '#ef4444' }} onClick={() => handleDelete(p)} title="Supprimer">
                         <Trash2 size={14} />
                       </button>
@@ -1333,6 +1383,46 @@ function ProjetsTab() {
           </div>
         )}
       </div>
+
+      {/* Domain edit modal */}
+      {editingProject && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+          <div style={{ background: '#fff', borderRadius: '12px', padding: '24px', width: '480px', maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+            <h3 style={{ ...sectionTitle, marginBottom: '4px' }}>Modifier les domaines</h3>
+            <p style={{ ...sectionSub, marginBottom: '16px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {editingProject.title}
+            </p>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={labelStyle}>Domaines</label>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <select
+                  value=""
+                  onChange={e => { addEditDomain(e.target.value); e.target.value = '' }}
+                  style={{ ...inputStyle, width: 'auto', minWidth: '200px' }}
+                >
+                  <option value="">— Ajouter un domaine —</option>
+                  {domains.filter(d => !editDomainIds.includes(d.id)).map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+                {editDomainIds.map(id => (
+                  <DomainChip key={id} name={domainMap[id] ?? `#${id}`} onRemove={() => removeEditDomain(id)} />
+                ))}
+                {editDomainIds.length === 0 && (
+                  <span style={{ fontSize: '12px', color: '#94a3b8' }}>Aucun domaine sélectionné</span>
+                )}
+              </div>
+            </div>
+            <InlineError msg={editError} />
+            <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+              <button style={btnPrimary} onClick={handleSaveDomains} disabled={editSaving}>
+                {editSaving ? 'Sauvegarde…' : 'Enregistrer'}
+              </button>
+              <button style={btnGhost} onClick={closeDomainEdit}>Annuler</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
