@@ -13,7 +13,6 @@ const steps = [
 const DEFAULT_STATS = [
   { value: '312', label: 'Soutenances' },
   { value: '5',   label: 'Jours' },
-  { value: '4',   label: 'Salles' },
   { value: '0',   label: 'Conflit' },
   { value: '94%', label: 'Score moyen', green: true },
 ]
@@ -30,14 +29,12 @@ function buildSessionSummary(session, slots, assignments) {
   const slotIds = new Set(sessionSlots.map(slot => slot.id))
   const sessionAssignments = assignments.filter(item => slotIds.has(item.slot_id))
   const uniqueDates = new Set(sessionSlots.map(slot => slot.date))
-  const uniqueRooms = new Set(sessionSlots.map(slot => slot.room))
 
   return {
     label: `Session #${session.id}`,
     date: formatDateLabel(session.start_date),
     soutenances: sessionAssignments.length,
     jours: uniqueDates.size,
-    salles: uniqueRooms.size,
   }
 }
 
@@ -52,12 +49,11 @@ export default function Dashboard() {
 
     async function loadStats() {
       try {
-        const [assignments, slots, sessions, conflicts, rooms] = await Promise.all([
+        const [assignments, slots, sessions, conflicts] = await Promise.all([
           apiRequest('/assignments?limit=200'),
           apiRequest('/slots?limit=200'),
           apiRequest('/sessions?limit=200'),
           apiRequest('/conflicts?limit=200'),
-          apiRequest('/rooms?limit=200'),
         ])
 
         if (!active) return
@@ -66,7 +62,6 @@ export default function Dashboard() {
         const safeSlots = Array.isArray(slots) ? slots : []
         const safeSessions = Array.isArray(sessions) ? sessions : []
         const safeConflicts = Array.isArray(conflicts) ? conflicts : []
-        const safeRooms = Array.isArray(rooms) ? rooms : []
 
         const uniqueDates = new Set(safeSlots.map(slot => slot.date))
         const score = safeAssignments.length
@@ -76,7 +71,6 @@ export default function Dashboard() {
         setStats([
           { value: `${safeAssignments.length}`, label: 'Soutenances' },
           { value: `${uniqueDates.size}`, label: 'Jours' },
-          { value: `${safeRooms.length}`, label: 'Salles' },
           { value: `${safeConflicts.length}`, label: 'Conflit' },
           { value: score === null ? '—' : `${score}%`, label: 'Score moyen', green: true },
         ])
@@ -171,8 +165,8 @@ export default function Dashboard() {
             <p className="text-xs text-gray-400 mb-2">{lastSession ? lastSession.date : '20 Mai 2024 à 14:32'}</p>
             <p className="text-xs text-gray-500">
               {lastSession
-                ? `${lastSession.soutenances} soutenances · ${lastSession.jours} jours · ${lastSession.salles} salles`
-                : '312 soutenances · 5 jours · 4 salles'}
+                ? `${lastSession.soutenances} soutenances · ${lastSession.jours} jours`
+                : '312 soutenances · 5 jours'}
             </p>
           </div>
           <button

@@ -68,7 +68,7 @@ function buildSolutionsFromDB(sessions, slots, assignments) {
     return {
       id: session.id, label: `#${session.id}`, score, stars: Math.min(4, Math.round(score / 25)),
       conflits: conflicts, jours: new Set(ss.map(s => s.date)).size,
-      salles: new Set(ss.map(s => s.room)).size, soutenances: aa.length,
+      soutenances: aa.length,
       recommended: false, date: session.start_date,
     }
   })
@@ -126,7 +126,6 @@ function buildSolutionsFromWorkflow(solverResult, reflectorResult) {
           stars: Math.min(4, Math.round(score / 25)),
           conflits,
           jours: new Set(aa.map(a => a.date).filter(Boolean)).size,
-          salles: new Set(aa.map(a => a.room).filter(Boolean)).size || 1,
           soutenances: aa.length,
           recommended: solutionIndex === recommendedIndex,
           date: null,
@@ -150,7 +149,6 @@ function buildSolutionsFromWorkflow(solverResult, reflectorResult) {
       stars: Math.min(4, Math.round(score / 25)),
       conflits: conflicts,
       jours: new Set(aa.map(a => a.date).filter(Boolean)).size,
-      salles: new Set(aa.map(a => a.room).filter(Boolean)).size || 1,
       soutenances: aa.length,
       recommended: i === (solverResult.recommended_index || solverResult.recommended_solution_index || 0),
       date: null, rawAssignments: aa, status,
@@ -259,12 +257,11 @@ function SolutionDetail({ sol, repartitionParJour, repartitionParSalle, onViewCa
       </div>
 
       <div className="px-5 py-4 space-y-5">
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           {[
-            { val: sol.soutenances, lbl: 'Soutenances'     },
-            { val: sol.jours,       lbl: 'Jours'           },
-            { val: sol.salles,      lbl: 'Salles'          },
-            { val: sol.conflits,    lbl: 'Conflits'        },
+            { val: sol.soutenances, lbl: 'Soutenances' },
+            { val: sol.jours,       lbl: 'Jours'       },
+            { val: sol.conflits,    lbl: 'Conflits'    },
           ].map(({ val, lbl }) => (
             <div key={lbl} className="bg-gray-50 rounded-lg px-2 py-2.5 text-center">
               <p className="text-base font-bold text-gray-900">{val}</p>
@@ -546,13 +543,13 @@ export default function Resultats() {
         <table className="min-w-full text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50">
-              {['Solution', 'Score', 'Conflits', 'Jours', 'Salles', 'Soutenances', 'Actions'].map(h => (
+              {['Solution', 'Score', 'Conflits', 'Jours', 'Soutenances', 'Actions'].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td className="px-4 py-10 text-center text-gray-400" colSpan={7}>Chargement…</td></tr>}
+            {loading && <tr><td className="px-4 py-10 text-center text-gray-400" colSpan={6}>Chargement…</td></tr>}
             {!loading && solutions.length === 0 && (() => {
               const solverStatus = wfSolverResult?.status
               const finalStatus  = workflowResult?.final_status
@@ -563,7 +560,7 @@ export default function Resultats() {
                 const relaxSuggestions = wfReflectorResult?.relaxation_suggestions || []
                 return (
                 <tr>
-                  <td colSpan={7}>
+                  <td colSpan={6}>
                     <div className="px-6 py-8 space-y-4">
                       <div className="flex items-center gap-2 text-red-600">
                         <AlertTriangle size={18} />
@@ -619,7 +616,7 @@ export default function Resultats() {
 
               if (finalStatus === 'error' || wfErrors.length > 0) return (
                 <tr>
-                  <td colSpan={7}>
+                  <td colSpan={6}>
                     <div className="px-6 py-8 space-y-3">
                       <div className="flex items-center gap-2 text-orange-600">
                         <AlertTriangle size={18} />
@@ -643,7 +640,7 @@ export default function Resultats() {
 
               return (
                 <tr>
-                  <td colSpan={7}>
+                  <td colSpan={6}>
                     <div className="flex flex-col items-center justify-center py-12 gap-3">
                       <CalendarDays size={36} className="text-gray-300" />
                       <p className="text-sm font-medium text-gray-500">Aucun résultat disponible</p>
@@ -671,7 +668,6 @@ export default function Resultats() {
                 </td>
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.conflits}</td>
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.jours}</td>
-                <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.salles}</td>
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{sol.soutenances}</td>
 
                 <td className="px-4 py-3 whitespace-nowrap">
